@@ -5,6 +5,32 @@ import { computeDistributionDivergence, type DivergenceItem } from './algorithms
 import { parseWhereClause } from './algorithms/filter-parser.js';
 import { clickstackConfig } from '../../config/clickstack.config.js';
 
+function normalizeCohort(val: any): { where: string; whereLanguage: 'lucene' | 'sql' } {
+  if (!val) return { where: '', whereLanguage: 'lucene' };
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.where) {
+          return {
+            where: parsed.where,
+            whereLanguage: parsed.whereLanguage || 'lucene',
+          };
+        }
+      } catch {}
+    }
+    return { where: trimmed, whereLanguage: 'lucene' };
+  }
+  if (typeof val === 'object' && val.where) {
+    return {
+      where: val.where,
+      whereLanguage: val.whereLanguage || 'lucene',
+    };
+  }
+  return { where: '', whereLanguage: 'lucene' };
+}
+
 @Injectable({ deps: [ClickHousePoolService] })
 export class QueryService {
   private drain = new DrainClusterer();
@@ -219,8 +245,11 @@ export class QueryService {
   }
 
   async eventDeltas(input: any) {
-    const targetParsed = parseWhereClause(input.target?.where, input.target?.whereLanguage || 'lucene');
-    const baselineParsed = parseWhereClause(input.baseline?.where, input.baseline?.whereLanguage || 'lucene');
+    const targetCohort = normalizeCohort(input.target);
+    const baselineCohort = normalizeCohort(input.baseline);
+
+    const targetParsed = parseWhereClause(targetCohort.where, targetCohort.whereLanguage);
+    const baselineParsed = parseWhereClause(baselineCohort.where, baselineCohort.whereLanguage);
 
     const targetWhere = targetParsed.sqlWhere;
     const baselineWhere = baselineParsed.sqlWhere;
@@ -286,19 +315,46 @@ export class QueryService {
   }
 
   async emergingSignals(input: any) {
-    const minShareRatio = input.minShareRatio || 2.0;
+    const minShareRatio = input.minShareRatio || 1.5;
 
-    // Split logs into two halves: recent (target) vs older (baseline)
+    let baselineWhere = '';
+    let currentWhere = '';
+
+    const additionalWhere = input.where ? parseWhereClause(input.where, input.whereLanguage || 'lucene').sqlWhere : '';
+
+    if (input.baselineStartTime && input.baselineEndTime) {
+      baselineWhere = `Timestamp >= parseDateTime64BestEffort('${input.baselineStartTime}') AND Timestamp <= parseDateTime64BestEffort('${input.baselineEndTime}')`;
+    } else if (input.baselineStartTime) {
+      baselineWhere = `Timestamp >= parseDateTime64BestEffort('${input.baselineStartTime}')`;
+    } else {
+      baselineWhere = `Timestamp < subtractHours(now(), 1)`;
+    }
+
+    if (input.currentStartTime && input.currentEndTime) {
+      currentWhere = `Timestamp >= parseDateTime64BestEffort('${input.currentStartTime}') AND Timestamp <= parseDateTime64BestEffort('${input.currentEndTime}')`;
+    } else if (input.currentStartTime) {
+      currentWhere = `Timestamp >= parseDateTime64BestEffort('${input.currentStartTime}')`;
+    } else {
+      currentWhere = `Timestamp >= subtractHours(now(), 1)`;
+    }
+
+    if (additionalWhere) {
+      baselineWhere += ` AND (${additionalWhere})`;
+      currentWhere += ` AND (${additionalWhere})`;
+    }
+
+    // Fetch target (current) window logs
     const recentRows = await this.clickhousePool.executeQuery<{ Body: string }>(
       `SELECT Body FROM ${this.db}.otel_logs
-       WHERE Timestamp >= subtractHours(now(), 1)
-       ORDER BY Timestamp DESC LIMIT 2000`
+       WHERE ${currentWhere}
+       ORDER BY Timestamp DESC LIMIT 5000`
     );
 
+    // Fetch baseline window logs
     const olderRows = await this.clickhousePool.executeQuery<{ Body: string }>(
       `SELECT Body FROM ${this.db}.otel_logs
-       WHERE Timestamp < subtractHours(now(), 1)
-       ORDER BY Timestamp DESC LIMIT 2000`
+       WHERE ${baselineWhere}
+       ORDER BY Timestamp DESC LIMIT 5000`
     );
 
     let recentLogs = recentRows.map(r => r.Body);
@@ -308,6 +364,7 @@ export class QueryService {
     if (recentLogs.length < 5 || olderLogs.length < 5) {
       const allLogs = await this.clickhousePool.executeQuery<{ Body: string }>(
         `SELECT Body FROM ${this.db}.otel_logs
+         ${additionalWhere ? `WHERE ${additionalWhere}` : ''}
          ORDER BY Timestamp DESC LIMIT 4000`
       );
       if (allLogs.length >= 8) {
@@ -329,7 +386,7 @@ export class QueryService {
     for (const p of recentPatterns) {
       const baselinePct = olderMap.get(p.template) ?? 0;
       const ratio = baselinePct === 0 ? Infinity : p.percentage / baselinePct;
-      if (ratio >= minShareRatio && p.percentage > 1.0) {
+      if ((ratio >= minShareRatio || baselinePct === 0) && p.percentage >= 1.0) {
         emerging.push({
           pattern: p.template,
           currentShare: `${p.percentage.toFixed(2)}%`,
@@ -343,11 +400,13 @@ export class QueryService {
 
     for (const p of olderPatterns) {
       const currentPct = recentMap.get(p.template) ?? 0;
-      if (p.percentage > 5 && currentPct < 1) {
+      const dropRatio = p.percentage === 0 ? 0 : currentPct / p.percentage;
+      if (currentPct === 0 || (p.percentage >= 5.0 && dropRatio <= 0.6)) {
         disappeared.push({
           pattern: p.template,
           baselineShare: `${p.percentage.toFixed(2)}%`,
           currentShare: `${currentPct.toFixed(2)}%`,
+          multiplier: currentPct === 0 ? 'GONE' : `-${Math.round((1 - dropRatio) * 100)}%`,
           whereSnippet: p.whereSnippet,
         });
       }
