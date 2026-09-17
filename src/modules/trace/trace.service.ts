@@ -1,18 +1,28 @@
 import { Injectable } from '@nitrostack/core';
 import { ClickHousePoolService } from '../../services/clickhouse-pool.service.js';
+import { clickstackConfig } from '../../config/clickstack.config.js';
+import { parseWhereClause } from '../query/algorithms/filter-parser.js';
 
 @Injectable({ deps: [ClickHousePoolService] })
 export class TraceService {
   constructor(private readonly clickhousePool: ClickHousePoolService) {}
 
+  private get db(): string {
+    return clickstackConfig.clickhouseDatabase || 'otel';
+  }
+
   async fetchTraceWaterfall(input: any) {
-    // If no traceId given, pick the most recent error trace
+    // If no traceId given, pick the most recent error trace or slowest trace
     let traceId = input.traceId;
     if (!traceId) {
+      const pickFilterParsed = parseWhereClause(input.pickFilter, 'lucene');
+      const pickWhere = pickFilterParsed.sqlWhere ? `AND (${pickFilterParsed.sqlWhere})` : '';
+      const orderClause = input.pickBy === 'random' ? 'rand()' : 'Duration DESC, Timestamp DESC';
+
       const latestError = await this.clickhousePool.executeQuery<{ TraceId: string }>(
-        `SELECT TraceId FROM otel.otel_traces
-         WHERE StatusCode = 'error' AND ParentSpanId = ''
-         ORDER BY Timestamp DESC
+        `SELECT TraceId FROM ${this.db}.otel_traces
+         WHERE StatusCode = 'error' AND ParentSpanId = '' ${pickWhere}
+         ORDER BY ${orderClause}
          LIMIT 1`
       );
       traceId = latestError[0]?.TraceId;
@@ -41,7 +51,7 @@ export class TraceService {
          StatusCode, StatusMessage, Duration,
          formatDateTime(Timestamp, '%Y-%m-%dT%H:%i:%S.%fZ') AS Timestamp,
          SpanAttributes, ResourceAttributes
-       FROM otel.otel_traces
+       FROM ${this.db}.otel_traces
        WHERE TraceId = {traceId: String}
        ORDER BY Timestamp ASC`,
       { traceId }
@@ -59,7 +69,7 @@ export class TraceService {
          formatDateTime(Timestamp, '%Y-%m-%dT%H:%i:%S.%fZ') AS Timestamp,
          SeverityText,
          Body
-       FROM otel.otel_logs
+       FROM ${this.db}.otel_logs
        WHERE TraceId = {traceId: String}
        ORDER BY Timestamp ASC`,
       { traceId }
@@ -113,15 +123,13 @@ export class TraceService {
 
   async fetchTopTimeConsumingOperations(input: any) {
     const parentFilter = input.parentFilter;
+    const parsed = parseWhereClause(parentFilter, input.whereLanguage || 'lucene');
 
-    // Build optional WHERE filter from parentFilter string (e.g. SpanName:"POST /api/...")
-    // For simplicity, support basic SpanName:"..." filter pattern
     let whereClause = '';
-    if (parentFilter) {
-      const match = parentFilter.match(/SpanName:\\?"([^"\\]+)\\?"/);
-      if (match) {
-        whereClause = `AND SpanName != {filterSpanName: String}`;
-      }
+    if (parsed.extracted.spanName) {
+      whereClause = `AND SpanName != '${parsed.extracted.spanName.replace(/'/g, "\\'")}'`;
+    } else if (parsed.sqlWhere) {
+      whereClause = `AND (${parsed.sqlWhere})`;
     }
 
     const rows = await this.clickhousePool.executeQuery<{
@@ -137,7 +145,7 @@ export class TraceService {
          round(sum(Duration) / 1000000, 2)          AS TotalDurationMs,
          round(avg(Duration) / 1000000, 2)          AS AvgDurationMs,
          count()                                     AS CallCount
-       FROM otel.otel_traces
+       FROM ${this.db}.otel_traces
        WHERE 1=1 ${whereClause}
        GROUP BY SpanName, ServiceName
        ORDER BY TotalDurationMs DESC

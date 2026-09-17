@@ -2,6 +2,8 @@ import { Injectable } from '@nitrostack/core';
 import { ClickHousePoolService } from '../../services/clickhouse-pool.service.js';
 import { DrainClusterer } from './algorithms/drain.js';
 import { computeDistributionDivergence, type DivergenceItem } from './algorithms/divergence.js';
+import { parseWhereClause } from './algorithms/filter-parser.js';
+import { clickstackConfig } from '../../config/clickstack.config.js';
 
 @Injectable({ deps: [ClickHousePoolService] })
 export class QueryService {
@@ -9,16 +11,23 @@ export class QueryService {
 
   constructor(private readonly clickhousePool: ClickHousePoolService) {}
 
+  private get db(): string {
+    return clickstackConfig.clickhouseDatabase || 'otel';
+  }
+
   async timeseries(input: any) {
     const granularity = input.granularity || '5m';
     const intervalSeconds = granularity.endsWith('m')
-      ? parseInt(granularity) * 60
+      ? parseInt(granularity, 10) * 60
       : granularity.endsWith('h')
-      ? parseInt(granularity) * 3600
+      ? parseInt(granularity, 10) * 3600
       : 300;
 
     const displayType = input.displayType || 'line';
     const select = input.select ?? [];
+
+    // Parse WHERE clause via Lucene/SQL filter parser
+    const parsed = parseWhereClause(input.where, input.whereLanguage || 'lucene');
 
     // Determine source table and metric expression from input
     const sourceId: string = input.sourceId ?? '';
@@ -26,8 +35,7 @@ export class QueryService {
     const isLog = sourceId.includes('log');
 
     if (isMetric) {
-      const metricName = input.where?.match(/MetricName\s*=\s*'([^']+)'/)?.[1]
-        ?? 'system.cpu.utilization';
+      const metricName = parsed.extracted.metricName ?? 'system.cpu.utilization';
       const rows = await this.clickhousePool.executeQuery<{
         ts: string;
         value: number;
@@ -35,7 +43,7 @@ export class QueryService {
         `SELECT
            formatDateTime(toStartOfInterval(Timestamp, INTERVAL {interval: UInt32} SECOND), '%Y-%m-%dT%H:%i:%SZ') AS ts,
            avg(Value) AS value
-         FROM otel.otel_metrics_gauge
+         FROM ${this.db}.otel_metrics_gauge
          WHERE MetricName = {metricName: String}
          GROUP BY ts
          ORDER BY ts ASC`,
@@ -50,12 +58,12 @@ export class QueryService {
     }
 
     if (isLog) {
-      const severity = input.where?.match(/SeverityText\s*=\s*'([^']+)'/)?.[1];
+      const severity = parsed.extracted.severity;
       const rows = await this.clickhousePool.executeQuery<{ ts: string; value: number }>(
         `SELECT
            formatDateTime(toStartOfInterval(Timestamp, INTERVAL {interval: UInt32} SECOND), '%Y-%m-%dT%H:%i:%SZ') AS ts,
            count() AS value
-         FROM otel.otel_logs
+         FROM ${this.db}.otel_logs
          ${severity ? 'WHERE SeverityText = {severity: String}' : ''}
          GROUP BY ts
          ORDER BY ts ASC`,
@@ -75,11 +83,14 @@ export class QueryService {
       : 'countIf(StatusCode = \'error\') / count() * 100';
     const alias = select[0]?.alias ?? (valueExpr.includes('Duration') ? 'Avg Latency (ms)' : '5xx Error Rate (%)');
 
+    const traceWhere = parsed.sqlWhere ? `WHERE ${parsed.sqlWhere}` : '';
+
     const rows = await this.clickhousePool.executeQuery<{ ts: string; value: number }>(
       `SELECT
          formatDateTime(toStartOfInterval(Timestamp, INTERVAL {interval: UInt32} SECOND), '%Y-%m-%dT%H:%i:%SZ') AS ts,
          ${valueExpr} AS value
-       FROM otel.otel_traces
+       FROM ${this.db}.otel_traces
+       ${traceWhere}
        GROUP BY ts
        ORDER BY ts ASC`,
       { interval: intervalSeconds }
@@ -99,7 +110,7 @@ export class QueryService {
     if (shape === 'number') {
       const result = await this.clickhousePool.executeQuery<{ errorRate: number }>(
         `SELECT round(countIf(StatusCode = 'error') / count() * 100, 2) AS errorRate
-         FROM otel.otel_traces
+         FROM ${this.db}.otel_traces
          WHERE ParentSpanId = ''`
       );
       return {
@@ -122,7 +133,7 @@ export class QueryService {
          count()                                        AS TotalRequests,
          countIf(StatusCode = 'error')                 AS ErrorCount,
          round(quantile(0.95)(Duration) / 1000000, 2)  AS P95LatencyMs
-       FROM otel.otel_traces
+       FROM ${this.db}.otel_traces
        GROUP BY ServiceName
        ORDER BY TotalRequests DESC`
     );
@@ -136,12 +147,17 @@ export class QueryService {
 
   async search(input: any) {
     const isDenoised = !!input.denoise;
-    const whereClause = input.where
-      ? `AND Body ILIKE {bodyFilter: String}`
-      : '';
+    const parsed = parseWhereClause(input.where, input.whereLanguage || 'lucene');
+    
+    let whereClause = '';
     const params: Record<string, any> = {};
-    if (input.where) params.bodyFilter = `%${input.where}%`;
-    if (isDenoised) params.excludePattern = '%HealthCheck ping%';
+
+    if (parsed.sqlWhere) {
+      whereClause = `AND (${parsed.sqlWhere})`;
+    } else if (input.where) {
+      whereClause = `AND Body ILIKE {bodyFilter: String}`;
+      params.bodyFilter = `%${input.where}%`;
+    }
 
     const denoiseClause = isDenoised
       ? `AND Body NOT ILIKE '%HealthCheck ping%'`
@@ -160,7 +176,7 @@ export class QueryService {
          SeverityText,
          Body,
          LogAttributes
-       FROM otel.otel_logs
+       FROM ${this.db}.otel_logs
        WHERE 1=1 ${whereClause} ${denoiseClause}
        ORDER BY Timestamp DESC
        LIMIT 100`,
@@ -179,7 +195,7 @@ export class QueryService {
     const sampleSize = input.sampleSize || 20000;
 
     const rows = await this.clickhousePool.executeQuery<{ Body: string }>(
-      `SELECT Body FROM otel.otel_logs
+      `SELECT Body FROM ${this.db}.otel_logs
        ORDER BY Timestamp DESC
        LIMIT {sampleSize: UInt32}`,
       { sampleSize }
@@ -197,8 +213,11 @@ export class QueryService {
   }
 
   async eventDeltas(input: any) {
-    const targetWhere = input.target?.where ?? '';
-    const baselineWhere = input.baseline?.where ?? '';
+    const targetParsed = parseWhereClause(input.target?.where, input.target?.whereLanguage || 'lucene');
+    const baselineParsed = parseWhereClause(input.baseline?.where, input.baseline?.whereLanguage || 'lucene');
+
+    const targetWhere = targetParsed.sqlWhere;
+    const baselineWhere = baselineParsed.sqlWhere;
 
     // Fetch target window logs
     const targetRows = await this.clickhousePool.executeQuery<{
@@ -206,7 +225,7 @@ export class QueryService {
       SeverityText: string;
       ServiceName: string;
     }>(
-      `SELECT Body, SeverityText, ServiceName FROM otel.otel_logs
+      `SELECT Body, SeverityText, ServiceName FROM ${this.db}.otel_logs
        ${targetWhere ? `WHERE ${targetWhere}` : ''}
        ORDER BY Timestamp DESC LIMIT 5000`
     );
@@ -217,7 +236,7 @@ export class QueryService {
       SeverityText: string;
       ServiceName: string;
     }>(
-      `SELECT Body, SeverityText, ServiceName FROM otel.otel_logs
+      `SELECT Body, SeverityText, ServiceName FROM ${this.db}.otel_logs
        ${baselineWhere ? `WHERE ${baselineWhere}` : ''}
        ORDER BY Timestamp ASC LIMIT 5000`
     );
@@ -265,13 +284,13 @@ export class QueryService {
 
     // Split logs into two halves: recent (target) vs older (baseline)
     const recentRows = await this.clickhousePool.executeQuery<{ Body: string }>(
-      `SELECT Body FROM otel.otel_logs
+      `SELECT Body FROM ${this.db}.otel_logs
        WHERE Timestamp >= subtractHours(now(), 1)
        ORDER BY Timestamp DESC LIMIT 2000`
     );
 
     const olderRows = await this.clickhousePool.executeQuery<{ Body: string }>(
-      `SELECT Body FROM otel.otel_logs
+      `SELECT Body FROM ${this.db}.otel_logs
        WHERE Timestamp < subtractHours(now(), 1)
        ORDER BY Timestamp DESC LIMIT 2000`
     );
@@ -288,12 +307,13 @@ export class QueryService {
     for (const p of recentPatterns) {
       const baselinePct = olderMap.get(p.template) ?? 0;
       const ratio = baselinePct === 0 ? Infinity : p.percentage / baselinePct;
-      if (ratio >= minShareRatio || (baselinePct === 0 && p.percentage > 0)) {
+      if (ratio >= minShareRatio && p.percentage > 1.0) {
         emerging.push({
           pattern: p.template,
-          baselineShare: baselinePct === 0 ? '0.00%' : `${baselinePct.toFixed(2)}%`,
           currentShare: `${p.percentage.toFixed(2)}%`,
-          surgeRatio: isFinite(ratio) ? ratio.toFixed(1) : 'Infinity',
+          baselineShare: `${baselinePct.toFixed(2)}%`,
+          multiplier: ratio === Infinity ? 'NEW' : `${ratio.toFixed(1)}x`,
+          sampleCount: p.sampleCount,
           whereSnippet: p.whereSnippet,
         });
       }

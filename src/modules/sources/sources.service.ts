@@ -1,6 +1,7 @@
 import { Injectable } from '@nitrostack/core';
 import { MOCK_SOURCES, MOCK_CONNECTIONS } from '../clickstack.data.js';
 import { ClickHousePoolService } from '../../services/clickhouse-pool.service.js';
+import { clickstackConfig } from '../../config/clickstack.config.js';
 
 @Injectable({ deps: [ClickHousePoolService] })
 export class SourcesService {
@@ -12,10 +13,14 @@ export class SourcesService {
 
   constructor(private readonly clickhousePool: ClickHousePoolService) {}
 
+  private get db(): string {
+    return clickstackConfig.clickhouseDatabase || 'otel';
+  }
+
   async listSources() {
     try {
       const tables = await this.clickhousePool.executeQuery<{ name: string; engine: string }>(
-        "SELECT name, engine FROM system.tables WHERE database = 'otel'"
+        `SELECT name, engine FROM system.tables WHERE database = '${this.db}'`
       );
 
       if (tables.length > 0) {
@@ -31,7 +36,7 @@ export class SourcesService {
             name: `ClickHouse ${t.name.replace(/_/g, ' ')} (${t.engine})`,
             kind,
             connection: 'conn_clickhouse_local',
-            databaseName: 'otel',
+            databaseName: this.db,
             tableName: t.name,
             ...(kind === 'metric'
               ? {
@@ -140,7 +145,7 @@ export class SourcesService {
         Description: string;
         Unit: string;
       }>(
-        'SELECT DISTINCT MetricName, any(Description) AS Description, any(Unit) AS Unit FROM otel.otel_metrics_gauge GROUP BY MetricName'
+        `SELECT DISTINCT MetricName, any(Description) AS Description, any(Unit) AS Unit FROM ${this.db}.otel_metrics_gauge GROUP BY MetricName`
       );
 
       if (rows.length > 0) {

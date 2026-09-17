@@ -4,11 +4,14 @@ import { QueryModule } from './modules/query/query.module.js';
 import { TraceModule } from './modules/trace/trace.module.js';
 import { DashboardsModule } from './modules/dashboards/dashboards.module.js';
 import { AlertsModule } from './modules/alerts/alerts.module.js';
+import { PromptsModule } from './modules/prompts/prompts.module.js';
+import { ResourcesModule } from './modules/resources/resources.module.js';
+import { OAuthGuard } from './guards/oauth.guard.js';
 import { clickstackConfig } from './config/clickstack.config.js';
 
 /**
  * ClickStack Observability MCP Server
- * Powered by NitroStack SDK Stateless with Interactive Widgets.
+ * Powered by NitroStack SDK Stateless with Interactive Widgets, Prompts, and Resources.
  */
 @McpApp({
   module: AppModule,
@@ -36,6 +39,9 @@ import { clickstackConfig } from './config/clickstack.config.js';
     TraceModule,
     DashboardsModule,
     AlertsModule,
+    PromptsModule,
+    ResourcesModule,
   ],
+  providers: [OAuthGuard],
 })
 export class AppModule {}
