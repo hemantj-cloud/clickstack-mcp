@@ -25,7 +25,7 @@ const SelectItemSchema = z.object({
 
 const TimeseriesSchema = z.object({
   sourceId: z.string().describe('Source ID from clickstack_list_sources'),
-  select: z.array(SelectItemSchema).describe('Plotted metric series'),
+  select: z.array(SelectItemSchema).optional().default([]).describe('Plotted metric series'),
   where: z.string().optional().default('').describe('Global filter applied to all series'),
   whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene'),
   groupBy: z.string().optional().describe('Split series by comma-delimited columns (e.g. ServiceName, StatusCode)'),
@@ -37,7 +37,7 @@ const TimeseriesSchema = z.object({
 
 const TableSchema = z.object({
   sourceId: z.string().describe('Source ID'),
-  select: z.array(SelectItemSchema),
+  select: z.array(SelectItemSchema).optional().default([]),
   where: z.string().optional().default(''),
   whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene'),
   groupBy: z.string().optional().describe('Group-by columns or ClickHouse expressions'),
@@ -69,23 +69,31 @@ const EventPatternsSchema = z.object({
   endTime: z.string().optional(),
 });
 
+const CohortFilterSchema = z.union([
+  z.string().describe('Filter expression string (e.g. SeverityText:ERROR or Duration >= 1500)'),
+  z.object({
+    where: z.string().describe('Filter expression'),
+    whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene'),
+  }),
+]);
+
 const EventDeltasSchema = z.object({
   sourceId: z.string().describe('Source ID'),
-  target: z.object({ where: z.string(), whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene') }),
-  baseline: z.object({ where: z.string(), whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene') }),
+  target: CohortFilterSchema.describe('Target cohort filter expression or object (e.g. SeverityText:ERROR)'),
+  baseline: CohortFilterSchema.describe('Baseline cohort filter expression or object (e.g. SeverityText:INFO)'),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
 });
 
 const EmergingSignalsSchema = z.object({
   sourceId: z.string().describe('Source ID'),
-  baselineStartTime: z.string(),
-  baselineEndTime: z.string(),
-  currentStartTime: z.string(),
-  currentEndTime: z.string(),
-  where: z.string().optional().default(''),
+  baselineStartTime: z.string().optional().describe('ISO 8601 baseline start window'),
+  baselineEndTime: z.string().optional().describe('ISO 8601 baseline end window'),
+  currentStartTime: z.string().optional().describe('ISO 8601 current start window'),
+  currentEndTime: z.string().optional().describe('ISO 8601 current end window'),
+  where: z.string().optional().default('').describe('Optional filter expression'),
   whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene'),
-  minShareRatio: z.number().optional().default(2.0),
+  minShareRatio: z.number().optional().default(1.5).describe('Minimum multiplier to qualify as emerging signal'),
 });
 
 const SqlSchema = z.object({

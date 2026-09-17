@@ -1,7 +1,35 @@
 import { Injectable } from '@nitrostack/core';
-import { MOCK_TIMESERIES, MOCK_EVENT_DELTAS, MOCK_LOG_PATTERNS } from '../clickstack.data.js';
 import { ClickHousePoolService } from '../../services/clickhouse-pool.service.js';
 import { DrainClusterer } from './algorithms/drain.js';
+import { computeDistributionDivergence, type DivergenceItem } from './algorithms/divergence.js';
+import { parseWhereClause } from './algorithms/filter-parser.js';
+import { clickstackConfig } from '../../config/clickstack.config.js';
+
+function normalizeCohort(val: any): { where: string; whereLanguage: 'lucene' | 'sql' } {
+  if (!val) return { where: '', whereLanguage: 'lucene' };
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.where) {
+          return {
+            where: parsed.where,
+            whereLanguage: parsed.whereLanguage || 'lucene',
+          };
+        }
+      } catch {}
+    }
+    return { where: trimmed, whereLanguage: 'lucene' };
+  }
+  if (typeof val === 'object' && val.where) {
+    return {
+      where: val.where,
+      whereLanguage: val.whereLanguage || 'lucene',
+    };
+  }
+  return { where: '', whereLanguage: 'lucene' };
+}
 
 @Injectable({ deps: [ClickHousePoolService] })
 export class QueryService {
@@ -9,145 +37,386 @@ export class QueryService {
 
   constructor(private readonly clickhousePool: ClickHousePoolService) {}
 
+  private get db(): string {
+    return clickstackConfig.clickhouseDatabase || 'otel';
+  }
+
   async timeseries(input: any) {
-    // If live ClickHouse is reachable, can execute compiled SQL; otherwise returns structured time-series
+    const granularity = input.granularity || '5m';
+    const intervalSeconds = granularity.endsWith('m')
+      ? parseInt(granularity, 10) * 60
+      : granularity.endsWith('h')
+      ? parseInt(granularity, 10) * 3600
+      : 300;
+
+    const displayType = input.displayType || 'line';
+    const select = input.select ?? [];
+
+    // Parse WHERE clause via Lucene/SQL filter parser
+    const parsed = parseWhereClause(input.where, input.whereLanguage || 'lucene');
+
+    // Determine source table and metric expression from input
+    const sourceId: string = input.sourceId ?? '';
+    const isMetric = sourceId.includes('metric');
+    const isLog = sourceId.includes('log');
+
+    if (isMetric) {
+      const metricName = parsed.extracted.metricName ?? 'system.cpu.utilization';
+      const rows = await this.clickhousePool.executeQuery<{
+        ts: string;
+        value: number;
+      }>(
+        `SELECT
+           formatDateTime(toStartOfInterval(Timestamp, INTERVAL {interval: UInt32} SECOND), '%Y-%m-%dT%H:%i:%SZ') AS ts,
+           avg(Value) AS value
+         FROM ${this.db}.otel_metrics_gauge
+         WHERE MetricName = {metricName: String}
+         GROUP BY ts
+         ORDER BY ts ASC`,
+        { interval: intervalSeconds, metricName }
+      );
+      return {
+        sourceId,
+        granularity,
+        displayType,
+        series: [{ alias: metricName, data: rows.map(r => ({ timestamp: r.ts, value: r.value })) }],
+      };
+    }
+
+    if (isLog) {
+      const severity = parsed.extracted.severity;
+      const rows = await this.clickhousePool.executeQuery<{ ts: string; value: number }>(
+        `SELECT
+           formatDateTime(toStartOfInterval(Timestamp, INTERVAL {interval: UInt32} SECOND), '%Y-%m-%dT%H:%i:%SZ') AS ts,
+           count() AS value
+         FROM ${this.db}.otel_logs
+         ${severity ? 'WHERE SeverityText = {severity: String}' : ''}
+         GROUP BY ts
+         ORDER BY ts ASC`,
+        severity ? { interval: intervalSeconds, severity } : { interval: intervalSeconds }
+      );
+      return {
+        sourceId,
+        granularity,
+        displayType,
+        series: [{ alias: 'Log Count', data: rows.map(r => ({ timestamp: r.ts, value: r.value })) }],
+      };
+    }
+
+    // Default: trace latency time series from otel_traces
+    const valueExpr = select[0]?.valueExpression?.includes('Duration')
+      ? 'avg(Duration) / 1000000'
+      : 'countIf(StatusCode = \'error\') / count() * 100';
+    const alias = select[0]?.alias ?? (valueExpr.includes('Duration') ? 'Avg Latency (ms)' : '5xx Error Rate (%)');
+
+    const traceWhere = parsed.sqlWhere ? `WHERE ${parsed.sqlWhere}` : '';
+
+    const rows = await this.clickhousePool.executeQuery<{ ts: string; value: number }>(
+      `SELECT
+         formatDateTime(toStartOfInterval(Timestamp, INTERVAL {interval: UInt32} SECOND), '%Y-%m-%dT%H:%i:%SZ') AS ts,
+         ${valueExpr} AS value
+       FROM ${this.db}.otel_traces
+       ${traceWhere}
+       GROUP BY ts
+       ORDER BY ts ASC`,
+      { interval: intervalSeconds }
+    );
+
     return {
-      sourceId: input.sourceId,
-      granularity: input.granularity || '5m',
-      displayType: input.displayType || 'line',
-      series: MOCK_TIMESERIES.series.map(s => ({
-        ...s,
-        data: s.data.map(d => ({
-          ...d,
-          value: input.select?.[0]?.valueExpression?.includes('Duration') ? d.value : parseFloat((d.value / 10).toFixed(2)),
-        })),
-      })),
+      sourceId,
+      granularity,
+      displayType,
+      series: [{ alias, data: rows.map(r => ({ timestamp: r.ts, value: parseFloat(Number(r.value).toFixed(3)) })) }],
     };
   }
 
   async table(input: any) {
     const shape = input.shape || 'table';
+
     if (shape === 'number') {
+      const result = await this.clickhousePool.executeQuery<{ errorRate: number }>(
+        `SELECT round(countIf(StatusCode = 'error') / count() * 100, 2) AS errorRate
+         FROM ${this.db}.otel_traces
+         WHERE ParentSpanId = ''`
+      );
       return {
         shape: 'number',
-        value: 0.14,
+        value: result[0]?.errorRate ?? 0,
         unit: '%',
         label: '5xx Error Rate',
-        status: 'ok',
+        status: (result[0]?.errorRate ?? 0) > 5 ? 'alert' : 'ok',
       };
     }
+
+    const rows = await this.clickhousePool.executeQuery<{
+      ServiceName: string;
+      TotalRequests: number;
+      ErrorCount: number;
+      P95LatencyMs: number;
+    }>(
+      `SELECT
+         ServiceName,
+         count()                                        AS TotalRequests,
+         countIf(StatusCode = 'error')                 AS ErrorCount,
+         round(quantile(0.95)(Duration) / 1000000, 2)  AS P95LatencyMs
+       FROM ${this.db}.otel_traces
+       GROUP BY ServiceName
+       ORDER BY TotalRequests DESC`
+    );
 
     return {
       shape,
       columns: ['ServiceName', 'TotalRequests', 'ErrorCount', 'P95LatencyMs'],
-      rows: [
-        { ServiceName: 'checkout-service', TotalRequests: 18420, ErrorCount: 842, P95LatencyMs: 2410.8 },
-        { ServiceName: 'auth-service', TotalRequests: 42100, ErrorCount: 12, P95LatencyMs: 45.2 },
-        { ServiceName: 'inventory-service', TotalRequests: 19800, ErrorCount: 840, P95LatencyMs: 2210.0 },
-        { ServiceName: 'payment-service', TotalRequests: 18200, ErrorCount: 5, P95LatencyMs: 120.4 },
-      ],
+      rows,
     };
   }
 
   async search(input: any) {
     const isDenoised = !!input.denoise;
-    const baseRows: any[] = [
-      {
-        Timestamp: '2026-09-17T18:22:02.400Z',
-        ServiceName: 'checkout-service',
-        SeverityText: 'ERROR',
-        Body: 'Order processing failed due to downstream database lock timeout in inventory table',
-        SpanAttributes: { 'http.route': '/api/v1/orders/checkout', 'http.status_code': '500' },
-      },
-      {
-        Timestamp: '2026-09-17T18:22:02.350Z',
-        ServiceName: 'inventory-service',
-        SeverityText: 'WARN',
-        Body: 'Transaction wait timeout exceeded (>2000ms) on row lock product_id 9842',
-        SpanAttributes: { 'db.statement': 'SELECT * FROM inventory WHERE product_id = 9842 FOR UPDATE' },
-      },
-      {
-        Timestamp: '2026-09-17T18:22:00.100Z',
-        ServiceName: 'checkout-service',
-        SeverityText: 'INFO',
-        Body: 'Order checkout initiated for cart #84210',
-        SpanAttributes: { 'http.route': '/api/v1/orders/checkout' },
-      },
-    ];
+    const parsed = parseWhereClause(input.where, input.whereLanguage || 'lucene', 'logs');
+    
+    let whereClause = '';
+    const params: Record<string, any> = {};
 
-    if (!isDenoised) {
-      baseRows.push(
-        {
-          Timestamp: '2026-09-17T18:21:59.000Z',
-          ServiceName: 'ingress-nginx',
-          SeverityText: 'INFO',
-          Body: 'HealthCheck ping received from IP 10.0.4.12, status: 200 OK',
-          SpanAttributes: {},
-        },
-        {
-          Timestamp: '2026-09-17T18:21:58.000Z',
-          ServiceName: 'ingress-nginx',
-          SeverityText: 'INFO',
-          Body: 'HealthCheck ping received from IP 10.0.4.14, status: 200 OK',
-          SpanAttributes: {},
-        }
-      );
+    if (parsed.sqlWhere) {
+      whereClause = `AND (${parsed.sqlWhere})`;
+    } else if (input.where) {
+      whereClause = `AND Body ILIKE {bodyFilter: String}`;
+      params.bodyFilter = `%${input.where}%`;
     }
+
+    const denoiseClause = isDenoised
+      ? `AND Body NOT ILIKE '%HealthCheck ping%'`
+      : '';
+
+    const limit = Math.min(Math.max(parseInt(input.limit ?? '50', 10), 1), 1000);
+    const offset = Math.max(parseInt(input.offset ?? '0', 10), 0);
+    params.limit = limit;
+    params.offset = offset;
+
+    const rows = await this.clickhousePool.executeQuery<{
+      Timestamp: string;
+      ServiceName: string;
+      SeverityText: string;
+      Body: string;
+      LogAttributes: Record<string, string>;
+    }>(
+      `SELECT
+         formatDateTime(Timestamp, '%Y-%m-%dT%H:%i:%S.%fZ') AS Timestamp,
+         ServiceName,
+         SeverityText,
+         Body,
+         LogAttributes
+       FROM ${this.db}.otel_logs
+       WHERE 1=1 ${whereClause} ${denoiseClause}
+       ORDER BY Timestamp DESC
+       LIMIT {limit: UInt32}
+       OFFSET {offset: UInt32}`,
+      params
+    );
 
     return {
       sourceId: input.sourceId,
       denoised: isDenoised,
-      totalCount: baseRows.length,
-      rows: baseRows,
+      totalCount: rows.length,
+      rows,
     };
   }
 
   async eventPatterns(input: any) {
+    const sampleSize = input.sampleSize || 20000;
+
+    const rows = await this.clickhousePool.executeQuery<{ Body: string }>(
+      `SELECT Body FROM ${this.db}.otel_logs
+       ORDER BY Timestamp DESC
+       LIMIT {sampleSize: UInt32}`,
+      { sampleSize }
+    );
+
+    const messages = rows.map(r => r.Body);
+    const patterns = this.drain.clusterLogs(messages);
+
     return {
       sourceId: input.sourceId,
-      sampleSize: input.sampleSize || 20000,
-      totalPatterns: MOCK_LOG_PATTERNS.length,
-      patterns: MOCK_LOG_PATTERNS,
+      sampleSize: messages.length,
+      totalPatterns: patterns.length,
+      patterns,
     };
   }
 
   async eventDeltas(input: any) {
+    const targetCohort = normalizeCohort(input.target);
+    const baselineCohort = normalizeCohort(input.baseline);
+
+    const targetParsed = parseWhereClause(targetCohort.where, targetCohort.whereLanguage);
+    const baselineParsed = parseWhereClause(baselineCohort.where, baselineCohort.whereLanguage);
+
+    const targetWhere = targetParsed.sqlWhere;
+    const baselineWhere = baselineParsed.sqlWhere;
+
+    // Fetch target window logs
+    const targetRows = await this.clickhousePool.executeQuery<{
+      Body: string;
+      SeverityText: string;
+      ServiceName: string;
+    }>(
+      `SELECT Body, SeverityText, ServiceName FROM ${this.db}.otel_logs
+       ${targetWhere ? `WHERE ${targetWhere}` : ''}
+       ORDER BY Timestamp DESC LIMIT 5000`
+    );
+
+    // Fetch baseline window logs
+    const baselineRows = await this.clickhousePool.executeQuery<{
+      Body: string;
+      SeverityText: string;
+      ServiceName: string;
+    }>(
+      `SELECT Body, SeverityText, ServiceName FROM ${this.db}.otel_logs
+       ${baselineWhere ? `WHERE ${baselineWhere}` : ''}
+       ORDER BY Timestamp ASC LIMIT 5000`
+    );
+
+    // Compute divergence on multiple attribute dimensions
+    const dimensions: { attr: string; getVal: (r: any) => string }[] = [
+      { attr: 'SeverityText', getVal: r => r.SeverityText },
+      { attr: 'ServiceName', getVal: r => r.ServiceName },
+      { attr: 'Body (masked)', getVal: r => this.drain.maskLog(r.Body) },
+    ];
+
+    const divergences: DivergenceItem[] = dimensions.map(dim => {
+      const targetVals = targetRows.map(dim.getVal);
+      const baselineVals = baselineRows.map(dim.getVal);
+      const score = computeDistributionDivergence(targetVals, baselineVals);
+
+      const topValuesFor = (vals: string[]) => {
+        const counts = new Map<string, number>();
+        for (const v of vals) counts.set(v, (counts.get(v) || 0) + 1);
+        const total = vals.length || 1;
+        return Array.from(counts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([value, count]) => ({ value, percent: parseFloat(((count / total) * 100).toFixed(1)) }));
+      };
+
+      return {
+        attribute: dim.attr,
+        divergenceScore: score,
+        targetTopValues: topValuesFor(targetVals),
+        baselineTopValues: topValuesFor(baselineVals),
+      };
+    }).sort((a, b) => b.divergenceScore - a.divergenceScore);
+
     return {
       sourceId: input.sourceId,
-      targetFilter: input.target?.where,
-      baselineFilter: input.baseline?.where,
-      divergences: MOCK_EVENT_DELTAS.divergences,
+      targetFilter: targetWhere,
+      baselineFilter: baselineWhere,
+      divergences,
     };
   }
 
   async emergingSignals(input: any) {
+    const minShareRatio = input.minShareRatio || 1.5;
+
+    let baselineWhere = '';
+    let currentWhere = '';
+
+    const additionalWhere = input.where ? parseWhereClause(input.where, input.whereLanguage || 'lucene').sqlWhere : '';
+
+    if (input.baselineStartTime && input.baselineEndTime) {
+      baselineWhere = `Timestamp >= parseDateTime64BestEffort('${input.baselineStartTime}') AND Timestamp <= parseDateTime64BestEffort('${input.baselineEndTime}')`;
+    } else if (input.baselineStartTime) {
+      baselineWhere = `Timestamp >= parseDateTime64BestEffort('${input.baselineStartTime}')`;
+    } else {
+      baselineWhere = `Timestamp < subtractHours(now(), 1)`;
+    }
+
+    if (input.currentStartTime && input.currentEndTime) {
+      currentWhere = `Timestamp >= parseDateTime64BestEffort('${input.currentStartTime}') AND Timestamp <= parseDateTime64BestEffort('${input.currentEndTime}')`;
+    } else if (input.currentStartTime) {
+      currentWhere = `Timestamp >= parseDateTime64BestEffort('${input.currentStartTime}')`;
+    } else {
+      currentWhere = `Timestamp >= subtractHours(now(), 1)`;
+    }
+
+    if (additionalWhere) {
+      baselineWhere += ` AND (${additionalWhere})`;
+      currentWhere += ` AND (${additionalWhere})`;
+    }
+
+    // Fetch target (current) window logs
+    const recentRows = await this.clickhousePool.executeQuery<{ Body: string }>(
+      `SELECT Body FROM ${this.db}.otel_logs
+       WHERE ${currentWhere}
+       ORDER BY Timestamp DESC LIMIT 5000`
+    );
+
+    // Fetch baseline window logs
+    const olderRows = await this.clickhousePool.executeQuery<{ Body: string }>(
+      `SELECT Body FROM ${this.db}.otel_logs
+       WHERE ${baselineWhere}
+       ORDER BY Timestamp DESC LIMIT 5000`
+    );
+
+    let recentLogs = recentRows.map(r => r.Body);
+    let olderLogs = olderRows.map(r => r.Body);
+
+    // Adaptive fallback: if time window has insufficient data, split all available logs 50/50
+    if (recentLogs.length < 5 || olderLogs.length < 5) {
+      const allLogs = await this.clickhousePool.executeQuery<{ Body: string }>(
+        `SELECT Body FROM ${this.db}.otel_logs
+         ${additionalWhere ? `WHERE ${additionalWhere}` : ''}
+         ORDER BY Timestamp DESC LIMIT 4000`
+      );
+      if (allLogs.length >= 8) {
+        const half = Math.floor(allLogs.length / 2);
+        recentLogs = allLogs.slice(0, half).map(r => r.Body);
+        olderLogs = allLogs.slice(half).map(r => r.Body);
+      }
+    }
+
+    const recentPatterns = this.drain.clusterLogs(recentLogs);
+    const olderPatterns = this.drain.clusterLogs(olderLogs);
+
+    const olderMap = new Map(olderPatterns.map(p => [p.template, p.percentage]));
+    const recentMap = new Map(recentPatterns.map(p => [p.template, p.percentage]));
+
+    const emerging: any[] = [];
+    const disappeared: any[] = [];
+
+    for (const p of recentPatterns) {
+      const baselinePct = olderMap.get(p.template) ?? 0;
+      const ratio = baselinePct === 0 ? Infinity : p.percentage / baselinePct;
+      if ((ratio >= minShareRatio || baselinePct === 0) && p.percentage >= 1.0) {
+        emerging.push({
+          pattern: p.template,
+          currentShare: `${p.percentage.toFixed(2)}%`,
+          baselineShare: `${baselinePct.toFixed(2)}%`,
+          multiplier: ratio === Infinity ? 'NEW' : `${ratio.toFixed(1)}x`,
+          sampleCount: p.sampleCount,
+          whereSnippet: p.whereSnippet,
+        });
+      }
+    }
+
+    for (const p of olderPatterns) {
+      const currentPct = recentMap.get(p.template) ?? 0;
+      const dropRatio = p.percentage === 0 ? 0 : currentPct / p.percentage;
+      if (currentPct === 0 || (p.percentage >= 5.0 && dropRatio <= 0.6)) {
+        disappeared.push({
+          pattern: p.template,
+          baselineShare: `${p.percentage.toFixed(2)}%`,
+          currentShare: `${currentPct.toFixed(2)}%`,
+          multiplier: currentPct === 0 ? 'GONE' : `-${Math.round((1 - dropRatio) * 100)}%`,
+          whereSnippet: p.whereSnippet,
+        });
+      }
+    }
+
     return {
       sourceId: input.sourceId,
-      minShareRatio: input.minShareRatio || 2.0,
-      emerging: [
-        {
-          pattern: 'DB connection lock timeout waiting for row in table <*>',
-          baselineShare: '0.00%',
-          currentShare: '4.20%',
-          surgeRatio: 'Infinity',
-          whereSnippet: 'Body:"lock timeout waiting for row"',
-        },
-        {
-          pattern: 'Order processing failed due to downstream database lock timeout',
-          baselineShare: '0.00%',
-          currentShare: '3.80%',
-          surgeRatio: 'Infinity',
-          whereSnippet: 'Body:"Order processing failed due to downstream"',
-        },
-      ],
-      disappeared: [
-        {
-          pattern: 'Inventory cache read hit for item <*>',
-          baselineShare: '12.40%',
-          currentShare: '0.10%',
-          whereSnippet: 'Body:"Inventory cache read hit"',
-        },
-      ],
+      minShareRatio,
+      emerging: emerging.slice(0, 10),
+      disappeared: disappeared.slice(0, 5),
     };
   }
 

@@ -3,7 +3,15 @@ import { MOCK_DASHBOARDS } from '../clickstack.data.js';
 
 @Injectable()
 export class DashboardsService {
-  private dashboards = [...MOCK_DASHBOARDS];
+  private static _dashboards = [...MOCK_DASHBOARDS];
+
+  private get dashboards() {
+    return DashboardsService._dashboards;
+  }
+
+  private set dashboards(val: any[]) {
+    DashboardsService._dashboards = val;
+  }
 
   async getDashboard(id?: string): Promise<any> {
     if (!id) {
@@ -27,7 +35,7 @@ export class DashboardsService {
     const existingIndex = this.dashboards.findIndex(d => d.id === dashboard.id);
     if (existingIndex >= 0) {
       this.dashboards[existingIndex] = { ...this.dashboards[existingIndex], ...dashboard };
-      return { id: dashboard.id, status: 'updated' };
+      return { id: dashboard.id, status: 'updated', dashboard: this.dashboards[existingIndex] };
     } else {
       const newId = dashboard.id || `dash_${Date.now()}`;
       const newDash = { ...dashboard, id: newId };

@@ -13,6 +13,7 @@ export class DrainClusterer {
       .replace(/\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/g, '<*>')
       .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<*>')
       .replace(/0x[0-9a-fA-F]+/g, '<*>')
+      .replace(/\b(?:usr|cart|txn|order|req|span|trace|id)_[a-zA-Z0-9_]+\b/gi, '<*>')
       .replace(/\b\d+\b/g, '<*>')
       .replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, '<*>');
   }

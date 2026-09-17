@@ -47,7 +47,7 @@ export class TraceTools {
       content: [
         {
           type: 'text',
-          text: `Trace ${data.traceId}: ${data.spans.length} spans, ${data.durationMs.toFixed(2)}ms duration. Interactive flamegraph widget rendered.`,
+          text: `Trace ${data.traceId}: ${data.spans?.length ?? 0} spans, ${(data.durationMs ?? 0).toFixed(2)}ms duration. Interactive flamegraph widget rendered.`,
         },
       ],
     };

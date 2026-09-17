@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useClickStackWidget } from '../../hooks/useClickStackWidget';
-import { GitCompare, Filter, ArrowRight, Check, Zap } from 'lucide-react';
+import { GitCompare, Filter, AlertTriangle } from 'lucide-react';
 
 const DEFAULT_DELTAS = {
   sourceId: 'src_trace_prod_01',
@@ -37,16 +37,32 @@ const DEFAULT_DELTAS = {
 };
 
 export default function EventDeltasPage() {
-  const { data, callTool } = useClickStackWidget(DEFAULT_DELTAS);
-  const [selectedAttr, setSelectedAttr] = useState<any>(data?.divergences?.[0]);
+  const { data: rawData, callTool } = useClickStackWidget<any>(DEFAULT_DELTAS);
+  const data = rawData || DEFAULT_DELTAS;
+
+  const divergences: any[] = Array.isArray(data?.divergences)
+    ? data.divergences
+    : Array.isArray(data?.data?.divergences)
+    ? data.data.divergences
+    : DEFAULT_DELTAS.divergences;
+
+  const [selectedAttr, setSelectedAttr] = useState<any>(divergences[0]);
+
+  useEffect(() => {
+    if (divergences.length > 0) {
+      setSelectedAttr(divergences[0]);
+    }
+  }, [rawData]);
 
   const handleFilterToAttribute = (attr: any) => {
     callTool('clickstack_search', {
-      sourceId: data.sourceId,
-      where: `${attr.attribute} = '${attr.targetTopValues[0]?.value}'`,
+      sourceId: data?.sourceId || DEFAULT_DELTAS.sourceId,
+      where: `${attr.attribute} = '${attr.targetTopValues?.[0]?.value || ''}'`,
       whereLanguage: 'sql',
     });
   };
+
+  const errorMessage = data?.error || (data?.message && !Array.isArray(data?.divergences) ? data.message : null);
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 p-4 font-sans text-xs select-none">
@@ -65,69 +81,86 @@ export default function EventDeltasPage() {
         </div>
 
         <div className="flex items-center gap-3 text-xs font-mono">
-          <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">
-            Target: {data.targetFilter}
+          <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 max-w-[220px] truncate" title={String(data?.targetFilter || '')}>
+            Target: {data?.targetFilter || 'Target Cohort'}
           </span>
-          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            Baseline: {data.baselineFilter}
+          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 max-w-[220px] truncate" title={String(data?.baselineFilter || '')}>
+            Baseline: {data?.baselineFilter || 'Baseline Cohort'}
           </span>
         </div>
       </div>
 
+      {errorMessage && (
+        <div className="mt-3 p-3 rounded-lg bg-rose-950/40 border border-rose-800 text-rose-300 flex items-center gap-2 font-mono">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span className="text-[11px]">{String(errorMessage)}</span>
+        </div>
+      )}
+
       {/* Divergence Ranking List */}
       <div className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
-        {data.divergences.map((item: any) => {
-          const isSelected = selectedAttr?.attribute === item.attribute;
-          const scorePercent = Math.round(item.divergenceScore * 100);
+        {divergences.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-slate-500 font-mono">
+            No divergence data found for the specified target and baseline cohorts.
+          </div>
+        ) : (
+          divergences.map((item: any, idx: number) => {
+            const isSelected = (selectedAttr?.attribute || divergences[0]?.attribute) === item.attribute;
+            const scorePercent = Math.round((item.divergenceScore || 0) * 100);
 
-          return (
-            <div
-              key={item.attribute}
-              onClick={() => setSelectedAttr(item)}
-              className={`p-3 rounded-lg border transition cursor-pointer ${
-                isSelected ? 'bg-indigo-950/40 border-indigo-500/50' : 'bg-slate-900/60 border-slate-800 hover:bg-slate-900'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-mono">
-                  <span className="font-bold text-slate-200">{item.attribute}</span>
-                </div>
-                <div className="flex items-center gap-2 font-mono">
-                  <span className="text-slate-400 text-[11px]">Divergence Score:</span>
-                  <span className={`font-bold ${scorePercent > 70 ? 'text-rose-400' : scorePercent > 30 ? 'text-amber-400' : 'text-slate-400'}`}>
-                    {scorePercent}%
-                  </span>
-                </div>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="w-full h-2 bg-slate-800 rounded-full mt-2 overflow-hidden">
-                <div
-                  style={{ width: `${scorePercent}%` }}
-                  className={`h-full rounded-full ${scorePercent > 70 ? 'bg-rose-500' : scorePercent > 30 ? 'bg-amber-500' : 'bg-slate-600'}`}
-                />
-              </div>
-
-              {/* Target vs Baseline breakdown */}
-              <div className="mt-2.5 grid grid-cols-2 gap-3 text-[11px] font-mono">
-                <div className="bg-slate-950/60 p-2 rounded border border-rose-500/20">
-                  <div className="text-rose-400 text-[10px] font-bold uppercase">Target Group Proportion</div>
-                  <div className="text-slate-200 mt-1 truncate">
-                    {item.targetTopValues[0]?.value || 'None'}
-                    <strong className="text-rose-400 ml-1.5">({item.targetTopValues[0]?.percent}%)</strong>
+            return (
+              <div
+                key={item.attribute || idx}
+                onClick={() => setSelectedAttr(item)}
+                className={`p-3 rounded-lg border transition cursor-pointer ${
+                  isSelected ? 'bg-indigo-950/40 border-indigo-500/50' : 'bg-slate-900/60 border-slate-800 hover:bg-slate-900'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-mono">
+                    <span className="font-bold text-slate-200">{item.attribute}</span>
+                  </div>
+                  <div className="flex items-center gap-2 font-mono">
+                    <span className="text-slate-400 text-[11px]">Divergence Score:</span>
+                    <span className={`font-bold ${scorePercent > 70 ? 'text-rose-400' : scorePercent > 30 ? 'text-amber-400' : 'text-slate-400'}`}>
+                      {scorePercent}%
+                    </span>
                   </div>
                 </div>
-                <div className="bg-slate-950/60 p-2 rounded border border-emerald-500/20">
-                  <div className="text-emerald-400 text-[10px] font-bold uppercase">Baseline Proportion</div>
-                  <div className="text-slate-200 mt-1 truncate">
-                    {item.baselineTopValues[0]?.value || 'None'}
-                    <strong className="text-emerald-400 ml-1.5">({item.baselineTopValues[0]?.percent}%)</strong>
+
+                {/* Progress Bar */}
+                <div className="w-full h-2 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                  <div
+                    style={{ width: `${scorePercent}%` }}
+                    className={`h-full rounded-full ${scorePercent > 70 ? 'bg-rose-500' : scorePercent > 30 ? 'bg-amber-500' : 'bg-slate-600'}`}
+                  />
+                </div>
+
+                {/* Target vs Baseline breakdown */}
+                <div className="mt-2.5 grid grid-cols-2 gap-3 text-[11px] font-mono">
+                  <div className="bg-slate-950/60 p-2 rounded border border-rose-500/20">
+                    <div className="text-rose-400 text-[10px] font-bold uppercase">Target Group Proportion</div>
+                    <div className="text-slate-200 mt-1 truncate">
+                      {item.targetTopValues?.[0]?.value ?? 'None'}
+                      {item.targetTopValues?.[0]?.percent !== undefined && (
+                        <strong className="text-rose-400 ml-1.5">({item.targetTopValues[0].percent}%)</strong>
+                      )}
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-emerald-500/20">
+                    <div className="text-emerald-400 text-[10px] font-bold uppercase">Baseline Proportion</div>
+                    <div className="text-slate-200 mt-1 truncate">
+                      {item.baselineTopValues?.[0]?.value ?? 'None'}
+                      {item.baselineTopValues?.[0]?.percent !== undefined && (
+                        <strong className="text-emerald-400 ml-1.5">({item.baselineTopValues[0].percent}%)</strong>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       {/* Selected Action Bar */}

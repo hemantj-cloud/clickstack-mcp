@@ -15,32 +15,35 @@ Instead of forcing AI models to formulate raw SQL or parsing massive text dumps,
 
 ---
 
-## 🛠️ Observability Tools Suite
+## 🛠️ Observability Tools Suite (27 Production Tools)
 
 | Module | Tool Name | Description | Interactive Widget |
 |---|---|---|---|
-| **Sources** | `clickstack_list_sources` | List all telemetry sources and database connections | — |
+| **Sources** (6) | `clickstack_list_sources` | List all telemetry sources and database connections | — |
 | | `clickstack_describe_source` | Return column schemas, map keys, and sampled values | — |
 | | `clickstack_list_metrics` | Catalog metric names with kind and pattern filters | `/metric-inspector` |
 | | `clickstack_describe_metric` | Drill into metric attributes, percentiles, and cardinality | `/metric-inspector` |
 | | `clickstack_save_source` | Create or update a telemetry data source | — |
 | | `clickstack_delete_source` | Delete a data source | — |
-| **Query** | `clickstack_timeseries` | Plot metrics over time as lines or stacked bars | `/timeseries-chart` |
+| **Query** (7) | `clickstack_timeseries` | Plot metrics over time as lines or stacked bars | `/timeseries-chart` |
 | | `clickstack_table` | Compute table aggregates, single numbers (KPI), or pie charts | `/timeseries-chart` |
 | | `clickstack_search` | Search raw logs, events, or spans with noise filtering | `/log-patterns` |
 | | `clickstack_event_patterns` | Discover log templates via Drain clustering | `/log-patterns` |
 | | `clickstack_event_deltas` | Rank attributes by distribution divergence (Root Cause) | `/event-deltas` |
 | | `clickstack_emerging_signals` | Detect newly emerging or vanishing log patterns | `/log-patterns` |
 | | `clickstack_sql` | Execute sandboxed ClickHouse SQL (last resort) | — |
-| **Traces** | `clickstack_trace_spans` | Waterfall trace viewer with critical path calculation | `/trace-waterfall` |
-| **Dashboards**| `clickstack_list_dashboards` | Catalog team operational dashboards | — |
-| | `clickstack_get_dashboard` | Retrieve dashboard metadata and tile layout | `/dashboard-canvas` |
-| | `clickstack_query_tiles` | Execute and validate all queries across a dashboard | `/dashboard-canvas` |
+| **Trace** (2) | `clickstack_trace_waterfall` | Waterfall trace viewer with critical path calculation | `/trace-waterfall` |
+| | `clickstack_trace_top_time_consuming_operations` | Latency contribution breakdown across child operations | `/trace-waterfall` |
+| **Dashboards** (7)| `clickstack_get_dashboard` | Retrieve dashboard metadata and multi-tile layout | `/dashboard-canvas` |
+| | `clickstack_get_dashboard_tile` | Inspect a single dashboard tile configuration | — |
 | | `clickstack_save_dashboard` | Create or update an operational dashboard | `/dashboard-canvas` |
-| | `clickstack_delete_dashboard` | Delete a dashboard | — |
-| **Alerts** | `clickstack_get_alert` | Get alert rule detail and evaluation history | `/alert-studio` |
-| | `clickstack_save_alert` | Create/update alert monitors with backtest simulation | `/alert-studio` |
-| | `clickstack_get_webhook` | List notification destinations (Slack, Incident.io, PD) | `/alert-studio` |
+| | `clickstack_patch_dashboard` | Apply partial updates to dashboard tiles | — |
+| | `clickstack_delete_dashboard` | Delete an operational dashboard | — |
+| | `clickstack_query_tile` | Execute a single tile query with live validation | — |
+| | `clickstack_query_tiles` | Batch-execute and validate all queries across a dashboard | `/dashboard-canvas` |
+| **Alerts** (5) | `clickstack_get_alert` | Get alert rule detail, thresholds, and evaluation history | `/alert-studio` |
+| | `clickstack_save_alert` | Create or update alert monitors with backtest simulation | `/alert-studio` |
+| | `clickstack_get_webhook` | List notification destinations (Slack, Incident.io, PD) | — |
 | | `clickstack_save_webhook` | Create or update a notification webhook | — |
 | | `clickstack_delete_webhook` | Delete a notification webhook | — |
 
@@ -58,31 +61,39 @@ Instead of forcing AI models to formulate raw SQL or parsing massive text dumps,
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (For You & Collaborators)
 
 ### 1. Prerequisites
 - Node.js >= 20.0.0
-- ClickHouse Cloud or self-hosted instance (optional for mock mode)
+- Docker & Docker Compose (running locally)
 
-### 2. Install & Build
+### 2. Install & Start Local ClickHouse
 ```bash
-# Install root dependencies
+# Clone the repository and install dependencies
 npm install
 
-# Install widget dependencies
-npm run widget install
-
-# Build widgets and TypeScript backend
-npm run build
+# Start local ClickHouse Docker with auto-seeded OpenTelemetry data
+npm run docker:up
 ```
 
-### 3. Start Server
+### 3. Build & Run MCP Server
 ```bash
-# Start production MCP server
+# Build Next.js widgets and TypeScript backend
+npm run build
+
+# Start production MCP server on http://localhost:3000/mcp
 npm start
 
-# Or run in development mode with live reload
-npm run dev
+# (Optional) Verify all 27 tools in one second
+npm run test:tools
+```
+
+### 🐳 Docker Helper Commands
+```bash
+npm run docker:up       # Launch/verify ClickHouse container with OTel seed data
+npm run docker:status   # Check container status
+npm run docker:down     # Stop ClickHouse container
+npm run docker:reset    # Full reset: wipe volumes, restart, and re-seed
 ```
 
 ### 4. Configuration (`.env`)
