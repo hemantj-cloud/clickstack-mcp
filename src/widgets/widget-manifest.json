@@ -1,0 +1,274 @@
+{
+    "version": "2.0.0",
+    "widgets": [
+        {
+            "uri": "/trace-waterfall",
+            "name": "Trace Waterfall & Flamegraph",
+            "description": "Interactive distributed trace waterfall with critical path calculation, span hierarchy, inline log correlation, and one-shot delta triage",
+            "examples": [
+                {
+                    "name": "Checkout API Distributed Trace",
+                    "description": "Distributed trace spanning checkout, auth, inventory and payment services with database lock error",
+                    "data": {
+                        "traceId": "7b3f9104e1a89c2fa394bc21890e44b1",
+                        "rootService": "checkout-service",
+                        "durationMs": 2412.35,
+                        "sourceId": "src_trace_prod_01",
+                        "spans": [
+                            {
+                                "spanId": "span_01",
+                                "parentSpanId": null,
+                                "serviceName": "checkout-service",
+                                "spanName": "POST /api/v1/orders/checkout",
+                                "statusCode": "error",
+                                "startOffsetMs": 0,
+                                "durationMs": 2412.35,
+                                "durationNs": 2412350000,
+                                "attributes": { "http.method": "POST", "http.status_code": "500" }
+                            },
+                            {
+                                "spanId": "span_03",
+                                "parentSpanId": "span_01",
+                                "serviceName": "inventory-service",
+                                "spanName": "POST /v2/inventory/lock",
+                                "statusCode": "error",
+                                "startOffsetMs": 65.1,
+                                "durationMs": 2210.8,
+                                "durationNs": 2210800000,
+                                "isCriticalPath": true,
+                                "attributes": { "db.system": "postgresql", "error.type": "LockTimeoutException" }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "tags": [
+                "trace",
+                "waterfall",
+                "flamegraph",
+                "spans",
+                "distributed-tracing",
+                "observability"
+            ]
+        },
+        {
+            "uri": "/timeseries-chart",
+            "name": "Timeseries Metric Chart",
+            "description": "Multi-series metric visualization with anomaly windows, dual Y-axis scaling, and point-in-time tooltip inspection",
+            "examples": [
+                {
+                    "name": "P95 Latency & 5xx Error Rate Surge",
+                    "description": "Comparative timeseries showing latency spike and error rate surge during deploy incident",
+                    "data": {
+                        "sourceId": "src_metric_prod_01",
+                        "granularity": "5m",
+                        "displayType": "line",
+                        "series": [
+                            {
+                                "alias": "P95 Latency (ms)",
+                                "color": "#818cf8",
+                                "data": [
+                                    { "timestamp": "18:00", "value": 142.1 },
+                                    { "timestamp": "18:20", "value": 2410.8 },
+                                    { "timestamp": "18:30", "value": 410.2 }
+                                ]
+                            },
+                            {
+                                "alias": "5xx Error Rate (%)",
+                                "color": "#f43f5e",
+                                "data": [
+                                    { "timestamp": "18:00", "value": 0.05 },
+                                    { "timestamp": "18:20", "value": 18.50 },
+                                    { "timestamp": "18:30", "value": 1.10 }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ],
+            "tags": [
+                "metrics",
+                "timeseries",
+                "chart",
+                "latency",
+                "error-rate",
+                "clickhouse"
+            ]
+        },
+        {
+            "uri": "/event-deltas",
+            "name": "Event Deltas & Divergence Triage",
+            "description": "Comparative root-cause analysis ranking attributes by distribution divergence between target and baseline event cohorts",
+            "examples": [
+                {
+                    "name": "Slow vs Fast Checkout Divergence",
+                    "description": "Divergence analysis pinpointing database lock contention as the primary variance factor",
+                    "data": {
+                        "divergences": [
+                            {
+                                "attribute": "SpanAttributes['db.statement']",
+                                "divergenceScore": 0.984,
+                                "targetTopValues": [{ "value": "SELECT * FROM inventory FOR UPDATE", "percent": 89.2 }],
+                                "baselineTopValues": [{ "value": "SELECT * FROM inventory FOR UPDATE", "percent": 2.1 }]
+                            },
+                            {
+                                "attribute": "ResourceAttributes['k8s.pod.name']",
+                                "divergenceScore": 0.521,
+                                "targetTopValues": [{ "value": "checkout-service-78bf-x942", "percent": 68.4 }],
+                                "baselineTopValues": [{ "value": "checkout-service-78bf-x942", "percent": 12.0 }]
+                            }
+                        ]
+                    }
+                }
+            ],
+            "tags": [
+                "deltas",
+                "divergence",
+                "root-cause",
+                "statistics",
+                "cohort-analysis"
+            ]
+        },
+        {
+            "uri": "/log-patterns",
+            "name": "Log Patterns & Drain Novelty",
+            "description": "Drain log message clustering, recurring event template discovery, repetitive noise suppression, and emerging error signals",
+            "examples": [
+                {
+                    "name": "Drain Log Templates & Noise Suppression",
+                    "description": "Drain template clustering highlighting 73% health-check spam and 4.2% lock timeout anomalies",
+                    "data": {
+                        "patterns": [
+                            {
+                                "template": "HealthCheck ping received from IP <*>, status: 200 OK",
+                                "sampleCount": 14640,
+                                "percentage": 73.2,
+                                "whereSnippet": "Body:\"HealthCheck ping received\"",
+                                "isSpam": true
+                            },
+                            {
+                                "template": "DB connection lock timeout waiting for row in table <*>",
+                                "sampleCount": 840,
+                                "percentage": 4.2,
+                                "whereSnippet": "Body:\"lock timeout waiting for row\"",
+                                "isAnomaly": true
+                            }
+                        ]
+                    }
+                }
+            ],
+            "tags": [
+                "logs",
+                "drain",
+                "clustering",
+                "templates",
+                "anomaly-detection",
+                "patterns"
+            ]
+        },
+        {
+            "uri": "/dashboard-canvas",
+            "name": "Operational Dashboard Canvas",
+            "description": "Multi-tile operational dashboard grid with real-time KPI metrics, line charts, error tables, and tile query validation",
+            "examples": [
+                {
+                    "name": "Production Reliability Overview",
+                    "description": "Standard SRE dashboard with error rate KPI, latency line chart, and top error tables",
+                    "data": {
+                        "id": "dash_api_overview",
+                        "name": "Production API & Reliability Overview",
+                        "tags": ["production", "api", "golden-signals"],
+                        "tiles": [
+                            {
+                                "id": "tile_kpi_error",
+                                "name": "5xx Error Rate",
+                                "displayType": "number",
+                                "x": 0, "y": 0, "w": 4, "h": 3,
+                                "config": { "sourceId": "src_trace_prod_01", "value": "0.14%" }
+                            },
+                            {
+                                "id": "tile_p95_latency",
+                                "name": "P95 Latency by Route",
+                                "displayType": "line",
+                                "x": 4, "y": 0, "w": 8, "h": 3,
+                                "config": { "sourceId": "src_trace_prod_01", "groupBy": "SpanName" }
+                            }
+                        ]
+                    }
+                }
+            ],
+            "tags": [
+                "dashboard",
+                "kpi",
+                "canvas",
+                "tiles",
+                "monitoring",
+                "charts"
+            ]
+        },
+        {
+            "uri": "/alert-studio",
+            "name": "Alert Studio & Historical Backtest",
+            "description": "Alert rule configuration with historical What-If backtest simulation slider, noise suppression metrics, and multi-channel webhook routing",
+            "examples": [
+                {
+                    "name": "Checkout P99 Latency Surge Alert",
+                    "description": "Alert monitor with 30-day simulated trigger frequency and Slack notification preview",
+                    "data": {
+                        "id": "alert_p99_spike",
+                        "name": "Checkout P99 Latency Surge",
+                        "displayName": "P99 Latency > 2000ms for 5m",
+                        "state": "ALERT",
+                        "interval": "5m",
+                        "threshold": 2000,
+                        "thresholdType": "above",
+                        "channels": ["wh_slack_sre"]
+                    }
+                }
+            ],
+            "tags": [
+                "alerts",
+                "studio",
+                "simulation",
+                "backtest",
+                "slack",
+                "webhooks",
+                "incident-response"
+            ]
+        },
+        {
+            "uri": "/metric-inspector",
+            "name": "Metric Inspector & Cardinality Cloud",
+            "description": "Metric distribution visualizer with percentile curves (p50-p99), dimension cardinality clouds, high-cardinality warnings, and ClickHouse rollup advisor",
+            "examples": [
+                {
+                    "name": "HTTP Request Duration Metric Inspection",
+                    "description": "Detailed inspection of http.server.duration with dimension cardinality and AggregatingMergeTree recommendations",
+                    "data": {
+                        "sourceId": "src_metric_prod_01",
+                        "metricName": "http.server.duration",
+                        "kind": "histogram",
+                        "unit": "ms",
+                        "summary": {
+                            "min": 4.2,
+                            "p50": 48.5,
+                            "p90": 185.0,
+                            "p95": 410.2,
+                            "p99": 2412.3,
+                            "max": 8420.0,
+                            "avg": 124.6
+                        }
+                    }
+                }
+            ],
+            "tags": [
+                "metrics",
+                "inspector",
+                "percentiles",
+                "cardinality",
+                "clickhouse-advisor",
+                "histogram"
+            ]
+        }
+    ]
+}
