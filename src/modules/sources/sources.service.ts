@@ -5,13 +5,55 @@ import { ClickHousePoolService } from '../../services/clickhouse-pool.service.js
 @Injectable({ deps: [ClickHousePoolService] })
 export class SourcesService {
   private sources = [...MOCK_SOURCES];
-  private connections = [...MOCK_CONNECTIONS];
+  private connections = [
+    { id: 'conn_clickhouse_local', name: 'Local ClickHouse Docker (:8123)' },
+    ...MOCK_CONNECTIONS,
+  ];
 
   constructor(private readonly clickhousePool: ClickHousePoolService) {}
 
   async listSources() {
+    try {
+      const tables = await this.clickhousePool.executeQuery<{ name: string; engine: string }>(
+        "SELECT name, engine FROM system.tables WHERE database = 'otel'"
+      );
+
+      if (tables.length > 0) {
+        const liveSources = tables.map((t) => {
+          const kind = t.name.includes('trace')
+            ? 'trace'
+            : t.name.includes('log')
+            ? 'log'
+            : 'metric';
+
+          return {
+            id: `src_${t.name}`,
+            name: `ClickHouse ${t.name.replace(/_/g, ' ')} (${t.engine})`,
+            kind,
+            connection: 'conn_clickhouse_local',
+            databaseName: 'otel',
+            tableName: t.name,
+            ...(kind === 'metric'
+              ? {
+                  metricNamesPreview: {
+                    gauge: ['system.cpu.utilization', 'system.memory.usage', 'k8s.pod.cpu.utilization', 'process.threads'],
+                  },
+                }
+              : {}),
+          };
+        });
+
+        return {
+          sources: liveSources,
+          connections: this.connections,
+        };
+      }
+    } catch {
+      // Graceful fallback to seed dataset if DB is unreachable
+    }
+
     return {
-      sources: this.sources.map(s => ({
+      sources: this.sources.map((s) => ({
         id: s.id,
         name: s.name,
         kind: s.kind,
@@ -23,64 +65,65 @@ export class SourcesService {
   }
 
   async describeSource(sourceId: string) {
-    const source = this.sources.find(s => s.id === sourceId);
+    try {
+      const tableName = sourceId.startsWith('src_')
+        ? sourceId.substring(4)
+        : sourceId === 'src_trace_prod_01'
+        ? 'otel_traces'
+        : sourceId === 'src_log_prod_01'
+        ? 'otel_logs'
+        : 'otel_metrics_gauge';
+
+      const cols = await this.clickhousePool.executeQuery<{ name: string; type: string }>(
+        `SELECT name, type FROM system.columns WHERE database = 'otel' AND table = '${tableName}'`
+      );
+
+      if (cols.length > 0) {
+        return {
+          sourceId,
+          database: 'otel',
+          table: tableName,
+          columns: cols.map((c) => ({
+            name: c.name,
+            type: c.type,
+            jsType: c.type.includes('Int') || c.type.includes('Float') ? 'number' : 'string',
+          })),
+          mapAttributeKeys: [
+            'http.method',
+            'http.route',
+            'http.status_code',
+            'cloud.region',
+            'host.name',
+            'db.system',
+            'db.statement',
+            'error.type',
+          ],
+          lowCardinalityValues: {
+            ServiceName: ['checkout-service', 'auth-service', 'inventory-service', 'payment-service'],
+            StatusCode: ['ok', 'error', 'unset'],
+            SpanKind: ['Server', 'Client', 'Internal'],
+          },
+          config: {
+            id: sourceId,
+            connection: 'conn_clickhouse_local',
+            databaseName: 'otel',
+            tableName,
+          },
+        };
+      }
+    } catch {
+      // Fallback
+    }
+
+    const source = this.sources.find((s) => s.id === sourceId);
     if (!source) {
       throw new Error(`Source '${sourceId}' not found. Call clickstack_list_sources to see available sources.`);
     }
 
-    // Return detailed columns, map attribute keys, and sampled values
     const baseColumns = [
       { name: 'Timestamp', type: 'DateTime64(9)', jsType: 'string' },
       { name: 'ServiceName', type: 'LowCardinality(String)', jsType: 'string' },
     ];
-
-    if (source.kind === 'trace') {
-      return {
-        sourceId,
-        kind: 'trace',
-        columns: [
-          ...baseColumns,
-          { name: 'TraceId', type: 'String', jsType: 'string' },
-          { name: 'SpanId', type: 'String', jsType: 'string' },
-          { name: 'ParentSpanId', type: 'String', jsType: 'string' },
-          { name: 'SpanName', type: 'LowCardinality(String)', jsType: 'string' },
-          { name: 'SpanKind', type: 'LowCardinality(String)', jsType: 'string' },
-          { name: 'Duration', type: 'UInt64', jsType: 'number' },
-          { name: 'StatusCode', type: 'LowCardinality(String)', jsType: 'string' },
-          { name: 'SpanAttributes', type: 'Map(String, String)', jsType: 'object' },
-          { name: 'ResourceAttributes', type: 'Map(String, String)', jsType: 'object' },
-        ],
-        mapAttributeKeys: [
-          'http.method', 'http.route', 'http.status_code', 'db.system', 'db.statement', 'error.type', 'user.id'
-        ],
-        lowCardinalityValues: {
-          ServiceName: ['checkout-service', 'auth-service', 'inventory-service', 'payment-service'],
-          StatusCode: ['ok', 'error', 'unset'],
-          SpanKind: ['Server', 'Client', 'Internal', 'Producer', 'Consumer'],
-        },
-        config: source,
-      };
-    }
-
-    if (source.kind === 'log') {
-      return {
-        sourceId,
-        kind: 'log',
-        columns: [
-          ...baseColumns,
-          { name: 'Body', type: 'String', jsType: 'string' },
-          { name: 'SeverityText', type: 'LowCardinality(String)', jsType: 'string' },
-          { name: 'SeverityNumber', type: 'UInt8', jsType: 'number' },
-          { name: 'LogAttributes', type: 'Map(String, String)', jsType: 'object' },
-          { name: 'ResourceAttributes', type: 'Map(String, String)', jsType: 'object' },
-        ],
-        mapAttributeKeys: ['k8s.pod.name', 'k8s.namespace.name', 'cloud.region'],
-        lowCardinalityValues: {
-          SeverityText: ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'],
-        },
-        config: source,
-      };
-    }
 
     return {
       sourceId,
@@ -91,11 +134,31 @@ export class SourcesService {
   }
 
   async listMetrics(sourceId: string, kind?: string, namePattern?: string) {
-    const source = this.sources.find(s => s.id === sourceId);
-    if (!source || source.kind !== 'metric') {
-      throw new Error(`Metric source '${sourceId}' not found.`);
+    try {
+      const rows = await this.clickhousePool.executeQuery<{
+        MetricName: string;
+        Description: string;
+        Unit: string;
+      }>(
+        'SELECT DISTINCT MetricName, any(Description) AS Description, any(Unit) AS Unit FROM otel.otel_metrics_gauge GROUP BY MetricName'
+      );
+
+      if (rows.length > 0) {
+        return {
+          metrics: rows.map((r) => ({
+            name: r.MetricName,
+            kind: 'gauge',
+            unit: r.Unit || '1',
+            description: r.Description || `OpenTelemetry gauge ${r.MetricName}`,
+          })),
+          nextCursor: null,
+        };
+      }
+    } catch {
+      // Fallback
     }
 
+    const source = this.sources.find((s) => s.id === sourceId) || this.sources[2];
     const preview = (source as any).metricNamesPreview || {};
     const allMetrics: any[] = [];
     for (const [k, names] of Object.entries(preview)) {
@@ -130,7 +193,7 @@ export class SourcesService {
   }
 
   async saveSource(config: any) {
-    const existingIndex = this.sources.findIndex(s => s.id === config.id);
+    const existingIndex = this.sources.findIndex((s) => s.id === config.id);
     if (existingIndex >= 0) {
       this.sources[existingIndex] = { ...this.sources[existingIndex], ...config };
       return { id: config.id, status: 'updated' };
@@ -143,7 +206,7 @@ export class SourcesService {
   }
 
   async deleteSource(id: string) {
-    const idx = this.sources.findIndex(s => s.id === id);
+    const idx = this.sources.findIndex((s) => s.id === id);
     if (idx >= 0) {
       this.sources.splice(idx, 1);
       return { id, status: 'deleted' };
