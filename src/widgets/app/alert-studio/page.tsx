@@ -36,7 +36,7 @@ const AVAILABLE_WEBHOOKS = [
 
 export default function AlertStudioPage() {
   const { data: mcpData, callTool } = useClickStackWidget(DEFAULT_ALERT);
-  const initialAlert = (mcpData as any)?.alert || mcpData || DEFAULT_ALERT;
+  const initialAlert = (mcpData as any)?.alert || (mcpData as any)?.alerts?.[0] || mcpData || DEFAULT_ALERT;
 
   const [name, setName] = useState(initialAlert.name || 'API Latency Threshold');
   const [interval, setInterval] = useState(initialAlert.interval || '5m');
