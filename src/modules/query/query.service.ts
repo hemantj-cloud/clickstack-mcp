@@ -147,7 +147,7 @@ export class QueryService {
 
   async search(input: any) {
     const isDenoised = !!input.denoise;
-    const parsed = parseWhereClause(input.where, input.whereLanguage || 'lucene');
+    const parsed = parseWhereClause(input.where, input.whereLanguage || 'lucene', 'logs');
     
     let whereClause = '';
     const params: Record<string, any> = {};
@@ -162,6 +162,11 @@ export class QueryService {
     const denoiseClause = isDenoised
       ? `AND Body NOT ILIKE '%HealthCheck ping%'`
       : '';
+
+    const limit = Math.min(Math.max(parseInt(input.limit ?? '50', 10), 1), 1000);
+    const offset = Math.max(parseInt(input.offset ?? '0', 10), 0);
+    params.limit = limit;
+    params.offset = offset;
 
     const rows = await this.clickhousePool.executeQuery<{
       Timestamp: string;
@@ -179,7 +184,8 @@ export class QueryService {
        FROM ${this.db}.otel_logs
        WHERE 1=1 ${whereClause} ${denoiseClause}
        ORDER BY Timestamp DESC
-       LIMIT 100`,
+       LIMIT {limit: UInt32}
+       OFFSET {offset: UInt32}`,
       params
     );
 

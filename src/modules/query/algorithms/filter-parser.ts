@@ -23,7 +23,8 @@ const ATTRIBUTE_MAP_PREFIXES = [
 
 export function parseWhereClause(
   where: string | undefined | null,
-  whereLanguage: 'lucene' | 'sql' = 'lucene'
+  whereLanguage: 'lucene' | 'sql' = 'lucene',
+  targetDomain: 'logs' | 'traces' | 'metrics' | 'auto' = 'auto'
 ): ParsedFilter {
   const extracted: ParsedFilter['extracted'] = {};
   if (!where || !where.trim()) {
@@ -107,8 +108,10 @@ export function parseWhereClause(
       } else {
         // Exact value or quoted phrase
         const cleanVal = rawValue.replace(/^['"]|['"]$/g, '');
-        // Check for wildcards e.g. checkout-*
-        if (cleanVal.includes('*')) {
+        // Always uppercase SeverityText for ClickHouse OTel standard (e.g. level:error -> SeverityText = 'ERROR')
+        if (sqlKey === 'SeverityText') {
+          sqlParts.push(`SeverityText = '${escapeSqlString(cleanVal.toUpperCase())}'`);
+        } else if (cleanVal.includes('*')) {
           const likeVal = cleanVal.replace(/\*/g, '%');
           sqlParts.push(`${sqlKey} LIKE '${escapeSqlString(likeVal)}'`);
         } else {
@@ -116,10 +119,14 @@ export function parseWhereClause(
         }
       }
     } else {
-      // Free-text keyword search -> matches Body or SpanName
+      // Free-text keyword search -> matches Body for logs or SpanName for traces
       const cleanWord = token.replace(/^['"]|['"]$/g, '');
       if (cleanWord) {
-        sqlParts.push(`(Body LIKE '%${escapeSqlString(cleanWord)}%' OR SpanName LIKE '%${escapeSqlString(cleanWord)}%')`);
+        if (targetDomain === 'traces') {
+          sqlParts.push(`SpanName LIKE '%${escapeSqlString(cleanWord)}%'`);
+        } else {
+          sqlParts.push(`Body LIKE '%${escapeSqlString(cleanWord)}%'`);
+        }
       }
     }
   }

@@ -17,6 +17,7 @@ describe('parseWhereClause', () => {
     const result1 = parseWhereClause('MetricName:system.cpu.utilization AND level:error');
     expect(result1.extracted.metricName).toBe('system.cpu.utilization');
     expect(result1.extracted.severity).toBe('ERROR');
+    expect(result1.sqlWhere).toContain("SeverityText = 'ERROR'");
 
     const result2 = parseWhereClause("MetricName = 'system.memory.usage'", 'sql');
     expect(result2.extracted.metricName).toBe('system.memory.usage');
