@@ -3,8 +3,24 @@ import { MOCK_ALERTS, MOCK_WEBHOOKS } from '../clickstack.data.js';
 
 @Injectable()
 export class AlertsService {
-  private alerts = [...MOCK_ALERTS];
-  private webhooks = [...MOCK_WEBHOOKS];
+  private static _alerts = [...MOCK_ALERTS];
+  private static _webhooks = [...MOCK_WEBHOOKS];
+
+  private get alerts() {
+    return AlertsService._alerts;
+  }
+
+  private set alerts(val: any[]) {
+    AlertsService._alerts = val;
+  }
+
+  private get webhooks() {
+    return AlertsService._webhooks;
+  }
+
+  private set webhooks(val: any[]) {
+    AlertsService._webhooks = val;
+  }
 
   async getAlert(id?: string, state?: string) {
     if (!id) {

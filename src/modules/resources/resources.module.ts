@@ -6,6 +6,7 @@ import { SourcesModule } from '../sources/sources.module.js';
   name: 'resources',
   description: 'ClickStack MCP Resources for telemetry catalog discovery',
   imports: [SourcesModule],
+  controllers: [ResourcesService],
   providers: [ResourcesService],
   exports: [ResourcesService],
 })

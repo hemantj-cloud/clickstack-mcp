@@ -72,9 +72,9 @@ const toolsToTest = [
   {
     name: 'clickstack_event_deltas',
     args: {
-      sourceId: 'src_trace_prod_01',
-      target: { where: 'Duration >= 2000000000', whereLanguage: 'sql' },
-      baseline: { where: 'Duration < 2000000000', whereLanguage: 'sql' },
+      sourceId: 'src_log_prod_01',
+      target: { where: "SeverityText = 'ERROR'", whereLanguage: 'sql' },
+      baseline: { where: "SeverityText = 'INFO'", whereLanguage: 'sql' },
     },
   },
   {
@@ -148,6 +148,7 @@ const toolsToTest = [
     args: {
       id: 'wh_test_ephemeral',
       name: 'Ephemeral Webhook',
+      service: 'slack',
       url: 'https://hooks.slack.com/services/test',
     },
   },

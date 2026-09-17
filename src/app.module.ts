@@ -28,12 +28,16 @@ import { clickstackConfig } from './config/clickstack.config.js';
   description: 'Enterprise ClickStack Observability MCP Server with Interactive Widgets',
   imports: [
     ConfigModule.forRoot(),
-    OAuthModule.forRoot({
-      required: clickstackConfig.oauthRequired,
-      resourceUri: clickstackConfig.resourceUri,
-      authorizationServers: [clickstackConfig.authServerUrl],
-      scopesSupported: clickstackConfig.scopesSupported,
-    }),
+    ...(clickstackConfig.oauthRequired
+      ? [
+          OAuthModule.forRoot({
+            required: true,
+            resourceUri: clickstackConfig.resourceUri,
+            authorizationServers: [clickstackConfig.authServerUrl],
+            scopesSupported: clickstackConfig.scopesSupported,
+          }),
+        ]
+      : []),
     SourcesModule,
     QueryModule,
     TraceModule,
