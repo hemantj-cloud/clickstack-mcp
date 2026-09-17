@@ -3,12 +3,41 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@modelcontextprotocol/ext-apps/react';
 
+function extractPayload(raw: any) {
+  if (!raw) return null;
+  if (raw.widgetData) return raw.widgetData;
+  if (raw.structuredContent?.widgetData) return raw.structuredContent.widgetData;
+  if (raw.structuredContent) return raw.structuredContent;
+  if (raw.content?.[0]?.text) {
+    try {
+      const parsed = JSON.parse(raw.content[0].text);
+      return parsed?.widgetData || parsed?.structuredContent?.widgetData || parsed?.structuredContent || parsed;
+    } catch {}
+  }
+  return raw;
+}
+
+function getInitialWindowData() {
+  if (typeof window !== 'undefined') {
+    const raw = (window as any)?.openai?.toolOutput;
+    const extracted = extractPayload(raw);
+    if (extracted && Object.keys(extracted).length > 0) return extracted;
+  }
+  return null;
+}
+
 export function useClickStackWidget<T = any>(defaultData: T) {
-  const [data, setData] = useState<T>(defaultData);
+  const [data, setData] = useState<T>(() => {
+    return (getInitialWindowData() as T) || defaultData;
+  });
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    const initial = getInitialWindowData();
+    if (initial) {
+      setData(initial as T);
+    }
   }, []);
 
   const { app, isConnected } = useApp({
@@ -16,15 +45,9 @@ export function useClickStackWidget<T = any>(defaultData: T) {
     capabilities: {},
     onAppCreated: (appInstance) => {
       appInstance.ontoolresult = (result: any) => {
-        if (result?.widgetData) {
-          setData(result.widgetData);
-        } else if (result?.structuredContent) {
-          setData(result.structuredContent);
-        } else if (result?.content?.[0]?.text) {
-          try {
-            const parsed = JSON.parse(result.content[0].text);
-            setData(parsed);
-          } catch {}
+        const payload = extractPayload(result);
+        if (payload) {
+          setData(payload as T);
         }
       };
     },
@@ -50,3 +73,4 @@ export function useClickStackWidget<T = any>(defaultData: T) {
     mounted,
   };
 }
+
