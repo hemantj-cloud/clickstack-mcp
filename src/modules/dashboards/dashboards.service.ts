@@ -35,7 +35,7 @@ export class DashboardsService {
     const existingIndex = this.dashboards.findIndex(d => d.id === dashboard.id);
     if (existingIndex >= 0) {
       this.dashboards[existingIndex] = { ...this.dashboards[existingIndex], ...dashboard };
-      return { id: dashboard.id, status: 'updated' };
+      return { id: dashboard.id, status: 'updated', dashboard: this.dashboards[existingIndex] };
     } else {
       const newId = dashboard.id || `dash_${Date.now()}`;
       const newDash = { ...dashboard, id: newId };

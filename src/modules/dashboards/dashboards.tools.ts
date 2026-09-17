@@ -15,6 +15,45 @@ const GetDashboardSchema = z.object({
   id: z.string().optional().describe('Dashboard ID. Omit to list all dashboards, provide to get full detail.'),
 });
 
+function parseJsonOrArray(val: any) {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {}
+    }
+    if (trimmed.length > 0) {
+      return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    return [];
+  }
+  return val;
+}
+
+function parseJsonOrObject(val: any) {
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {}
+    }
+  }
+  return val;
+}
+
+const ArrayOrStringSchema = z.union([
+  z.string().describe('JSON array string or single value'),
+  z.array(z.any()),
+]);
+
+const StringArrayOrStringSchema = z.union([
+  z.string().describe('JSON array or comma-separated string'),
+  z.array(z.string()),
+]);
+
 const GetDashboardTileSchema = z.object({
   dashboardId: z.string().describe('Dashboard ID'),
   tileId: z.string().describe('Tile ID within the dashboard'),
@@ -23,15 +62,15 @@ const GetDashboardTileSchema = z.object({
 const SaveDashboardSchema = z.object({
   id: z.string().optional().describe('Dashboard ID. Omit to create, provide to update.'),
   name: z.string().describe('Dashboard display name'),
-  tags: z.array(z.string()).optional(),
-  tiles: z.array(z.any()).describe('Array of dashboard tile configurations'),
+  tags: StringArrayOrStringSchema.optional(),
+  tiles: ArrayOrStringSchema.describe('Array of dashboard tile configurations'),
 });
 
 const PatchDashboardSchema = z.object({
   id: z.string().describe('Dashboard ID to patch'),
   name: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  tile: z.any().optional().describe('Single tile to update/replace in place'),
+  tags: StringArrayOrStringSchema.optional(),
+  tile: z.union([z.string(), z.any()]).optional().describe('Single tile to update/replace in place'),
 });
 
 const DeleteDashboardSchema = z.object({
@@ -45,7 +84,7 @@ const QueryTileSchema = z.object({
 
 const QueryTilesSchema = z.object({
   dashboardId: z.string().describe('Dashboard ID'),
-  tileIds: z.array(z.string()).optional().describe('Optional subset of tile IDs to validate'),
+  tileIds: StringArrayOrStringSchema.optional().describe('Optional subset of tile IDs to validate'),
 });
 
 @Injectable({ deps: [DashboardsService] })
@@ -88,7 +127,13 @@ export class DashboardsTools {
   })
   @Widget(clickstackWidget('/dashboard-canvas'))
   async saveDashboard(input: z.infer<typeof SaveDashboardSchema>, _ctx: ExecutionContext) {
-    const result = await this.dashboardsService.saveDashboard(input);
+    const tiles = parseJsonOrArray(input.tiles);
+    const tags = input.tags !== undefined ? parseJsonOrArray(input.tags) : undefined;
+    const result = await this.dashboardsService.saveDashboard({
+      ...input,
+      tiles,
+      tags,
+    });
     return {
       widgetData: result.dashboard,
       content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -101,16 +146,24 @@ export class DashboardsTools {
     inputSchema: PatchDashboardSchema,
     annotations: { destructiveHint: true },
   })
+  @Widget(clickstackWidget('/dashboard-canvas'))
   async patchDashboard(input: z.infer<typeof PatchDashboardSchema>, _ctx: ExecutionContext) {
-    const result = await this.dashboardsService.patchDashboard(input.id, input);
+    const tags = input.tags !== undefined ? parseJsonOrArray(input.tags) : undefined;
+    const tile = input.tile !== undefined ? parseJsonOrObject(input.tile) : undefined;
+    const result = await this.dashboardsService.patchDashboard(input.id, {
+      ...input,
+      tags,
+      tile,
+    });
     return {
+      widgetData: result.dashboard,
       content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
     };
   }
 
   @Tool({
     name: 'clickstack_delete_dashboard',
-    description: 'Permanently delete a dashboard by ID.',
+    description: 'Delete a dashboard by ID.',
     inputSchema: DeleteDashboardSchema,
     annotations: { destructiveHint: true },
   })
@@ -123,7 +176,7 @@ export class DashboardsTools {
 
   @Tool({
     name: 'clickstack_query_tile',
-    description: 'Execute the query for a single tile on an existing dashboard to spot-check results.',
+    description: 'Execute the underlying query for a single dashboard tile to verify data correctness.',
     inputSchema: QueryTileSchema,
     annotations: { readOnlyHint: true },
   })
@@ -136,13 +189,14 @@ export class DashboardsTools {
 
   @Tool({
     name: 'clickstack_query_tiles',
-    description: 'Batch-validate up to 50 dashboard tiles in ONE call and return a per-tile success/failure summary. PREFER THIS after saving a dashboard.',
+    description: 'Batch-validate all queries for a dashboard in one call, verifying every tile returns valid data.',
     inputSchema: QueryTilesSchema,
     annotations: { readOnlyHint: true },
   })
   @Widget(clickstackWidget('/dashboard-canvas'))
   async queryTiles(input: z.infer<typeof QueryTilesSchema>, _ctx: ExecutionContext) {
-    const data = await this.dashboardsService.queryTiles(input.dashboardId, input.tileIds);
+    const tileIds = input.tileIds !== undefined ? parseJsonOrArray(input.tileIds) : undefined;
+    const data = await this.dashboardsService.queryTiles(input.dashboardId, tileIds);
     return {
       widgetData: data,
       content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],

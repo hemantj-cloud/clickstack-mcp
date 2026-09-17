@@ -22,7 +22,21 @@ const SaveAlertSchema = z.object({
   interval: z.enum(['1m', '5m', '15m', '30m', '1h', '6h', '12h', '1d']),
   thresholdType: z.enum(['above', 'below', 'outside', 'within']),
   threshold: z.number().describe('Numeric threshold to fire on'),
-  channels: z.array(z.string()).min(1).describe('Webhook channel IDs to notify'),
+  channels: z.preprocess((v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') {
+      const trimmed = v.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          return JSON.parse(trimmed);
+        } catch {}
+      }
+      if (trimmed.length > 0) {
+        return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+    return v;
+  }, z.array(z.string()).min(1)).describe('Webhook channel IDs to notify'),
 });
 
 const SaveWebhookSchema = z.object({
