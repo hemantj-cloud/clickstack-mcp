@@ -25,7 +25,7 @@ const SelectItemSchema = z.object({
 
 const TimeseriesSchema = z.object({
   sourceId: z.string().describe('Source ID from clickstack_list_sources'),
-  select: z.array(SelectItemSchema).describe('Plotted metric series'),
+  select: z.array(SelectItemSchema).optional().default([]).describe('Plotted metric series'),
   where: z.string().optional().default('').describe('Global filter applied to all series'),
   whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene'),
   groupBy: z.string().optional().describe('Split series by comma-delimited columns (e.g. ServiceName, StatusCode)'),
@@ -37,7 +37,7 @@ const TimeseriesSchema = z.object({
 
 const TableSchema = z.object({
   sourceId: z.string().describe('Source ID'),
-  select: z.array(SelectItemSchema),
+  select: z.array(SelectItemSchema).optional().default([]),
   where: z.string().optional().default(''),
   whereLanguage: z.enum(['lucene', 'sql']).optional().default('lucene'),
   groupBy: z.string().optional().describe('Group-by columns or ClickHouse expressions'),

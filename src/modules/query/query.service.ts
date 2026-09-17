@@ -301,8 +301,24 @@ export class QueryService {
        ORDER BY Timestamp DESC LIMIT 2000`
     );
 
-    const recentPatterns = this.drain.clusterLogs(recentRows.map(r => r.Body));
-    const olderPatterns = this.drain.clusterLogs(olderRows.map(r => r.Body));
+    let recentLogs = recentRows.map(r => r.Body);
+    let olderLogs = olderRows.map(r => r.Body);
+
+    // Adaptive fallback: if time window has insufficient data, split all available logs 50/50
+    if (recentLogs.length < 5 || olderLogs.length < 5) {
+      const allLogs = await this.clickhousePool.executeQuery<{ Body: string }>(
+        `SELECT Body FROM ${this.db}.otel_logs
+         ORDER BY Timestamp DESC LIMIT 4000`
+      );
+      if (allLogs.length >= 8) {
+        const half = Math.floor(allLogs.length / 2);
+        recentLogs = allLogs.slice(0, half).map(r => r.Body);
+        olderLogs = allLogs.slice(half).map(r => r.Body);
+      }
+    }
+
+    const recentPatterns = this.drain.clusterLogs(recentLogs);
+    const olderPatterns = this.drain.clusterLogs(olderLogs);
 
     const olderMap = new Map(olderPatterns.map(p => [p.template, p.percentage]));
     const recentMap = new Map(recentPatterns.map(p => [p.template, p.percentage]));

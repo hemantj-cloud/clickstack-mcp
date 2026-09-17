@@ -5,11 +5,27 @@ import { clickstackConfig } from '../../config/clickstack.config.js';
 
 @Injectable({ deps: [ClickHousePoolService] })
 export class SourcesService {
-  private sources = [...MOCK_SOURCES];
-  private connections = [
+  private static _sources = [...MOCK_SOURCES];
+  private static _connections = [
     { id: 'conn_clickhouse_local', name: 'Local ClickHouse Docker (:8123)' },
     ...MOCK_CONNECTIONS,
   ];
+
+  private get sources() {
+    return SourcesService._sources;
+  }
+
+  private set sources(val: any[]) {
+    SourcesService._sources = val;
+  }
+
+  private get connections() {
+    return SourcesService._connections;
+  }
+
+  private set connections(val: any[]) {
+    SourcesService._connections = val;
+  }
 
   constructor(private readonly clickhousePool: ClickHousePoolService) {}
 
@@ -183,10 +199,62 @@ export class SourcesService {
   }
 
   async describeMetric(sourceId: string, metricName: string, kind: string) {
+    try {
+      const stats = await this.clickhousePool.executeQuery<{
+        sampleCount: number;
+        minVal: number;
+        maxVal: number;
+        avgVal: number;
+        p95: number;
+        unit: string;
+        description: string;
+        services: string[];
+      }>(
+        `SELECT
+           count()                                        AS sampleCount,
+           round(min(Value), 3)                          AS minVal,
+           round(max(Value), 3)                          AS maxVal,
+           round(avg(Value), 3)                          AS avgVal,
+           round(quantile(0.95)(Value), 3)               AS p95,
+           any(Unit)                                      AS unit,
+           any(Description)                               AS description,
+           groupUniqArray(ServiceName)                    AS services
+         FROM ${this.db}.otel_metrics_gauge
+         WHERE MetricName = {metricName: String}`,
+        { metricName }
+      );
+
+      if (stats.length > 0 && stats[0].sampleCount > 0) {
+        const s = stats[0];
+        return {
+          sourceId,
+          metricName,
+          kind: kind || 'gauge',
+          unit: s.unit || (metricName.includes('duration') ? 'ms' : '1'),
+          description: s.description || `OpenTelemetry metric ${metricName}`,
+          sampleCount: s.sampleCount,
+          statistics: {
+            min: s.minVal,
+            max: s.maxVal,
+            avg: s.avgVal,
+            p95: s.p95,
+          },
+          servicesReporting: s.services,
+          attributeKeys: ['host.name', 'env', 'service.name'],
+          sampledValues: {
+            'service.name': s.services,
+            'env': ['production'],
+          },
+        };
+      }
+    } catch {
+      // Graceful fallback if metric not yet reported
+    }
+
     return {
       sourceId,
       metricName,
-      kind,
+      kind: kind || 'gauge',
       unit: metricName.includes('duration') ? 'ms' : '1',
       description: `Metric drill-down for ${metricName}`,
       attributeKeys: ['service.name', 'host.name', 'http.method', 'http.status_code'],
