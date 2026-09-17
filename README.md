@@ -61,31 +61,39 @@ Instead of forcing AI models to formulate raw SQL or parsing massive text dumps,
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (For You & Collaborators)
 
 ### 1. Prerequisites
 - Node.js >= 20.0.0
-- ClickHouse Cloud or self-hosted instance (optional for mock mode)
+- Docker & Docker Compose (running locally)
 
-### 2. Install & Build
+### 2. Install & Start Local ClickHouse
 ```bash
-# Install root dependencies
+# Clone the repository and install dependencies
 npm install
 
-# Install widget dependencies
-npm run widget install
-
-# Build widgets and TypeScript backend
-npm run build
+# Start local ClickHouse Docker with auto-seeded OpenTelemetry data
+npm run docker:up
 ```
 
-### 3. Start Server
+### 3. Build & Run MCP Server
 ```bash
-# Start production MCP server
+# Build Next.js widgets and TypeScript backend
+npm run build
+
+# Start production MCP server on http://localhost:3000/mcp
 npm start
 
-# Or run in development mode with live reload
-npm run dev
+# (Optional) Verify all 27 tools in one second
+npm run test:tools
+```
+
+### 🐳 Docker Helper Commands
+```bash
+npm run docker:up       # Launch/verify ClickHouse container with OTel seed data
+npm run docker:status   # Check container status
+npm run docker:down     # Stop ClickHouse container
+npm run docker:reset    # Full reset: wipe volumes, restart, and re-seed
 ```
 
 ### 4. Configuration (`.env`)

@@ -13,7 +13,11 @@
     "install:all": "nitrostack-cli install",
     "widget": "npm --prefix src/widgets",
     "test": "vitest run",
-    "test:tools": "node scripts/test-all-tools.mjs"
+    "test:tools": "node scripts/test-all-tools.mjs",
+    "docker:up": "node scripts/setup-docker.mjs",
+    "docker:down": "docker compose down",
+    "docker:reset": "docker compose down -v && node scripts/setup-docker.mjs",
+    "docker:status": "docker compose ps"
   },
   "keywords": [
     "nitrostack",
