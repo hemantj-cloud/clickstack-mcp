@@ -2,18 +2,19 @@
 
 import React, { useState } from 'react';
 import { useClickStackWidget } from '../../hooks/useClickStackWidget';
+import { ClickStackHeader } from '../../components/ClickStackHeader';
 import {
   Terminal,
-  ShieldAlert,
-  Sparkles,
   Filter,
   Copy,
   Check,
   Search,
-  ArrowUpRight,
-  TrendingDown,
-  Activity,
+  SlidersHorizontal,
+  Table as TableIcon,
+  Sparkles,
   Layers,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 
 const DEFAULT_PATTERNS = {
@@ -45,14 +46,49 @@ const DEFAULT_PATTERNS = {
       sampleCount: 42,
       percentage: 0.21,
       whereSnippet: 'Body:"JWT token verification failed"',
+      isAnomaly: true,
     },
   ],
 };
+
+const SAMPLE_LOG_ROWS = [
+  {
+    timestamp: '2026-09-18 16:22:00.100',
+    serviceName: 'checkout-service',
+    severityText: 'INFO',
+    body: 'Order checkout initiated for cart #84210, customerId: usr_94821',
+  },
+  {
+    timestamp: '2026-09-18 16:22:01.400',
+    serviceName: 'inventory-service',
+    severityText: 'INFO',
+    body: 'Acquiring lock on row #9842 in inventory table for order checkout',
+  },
+  {
+    timestamp: '2026-09-18 16:22:02.350',
+    serviceName: 'inventory-service',
+    severityText: 'WARN',
+    body: 'Transaction wait timeout exceeded (>2000ms) on row lock product_id 9842',
+  },
+  {
+    timestamp: '2026-09-18 16:22:02.400',
+    serviceName: 'checkout-service',
+    severityText: 'ERROR',
+    body: 'Order processing failed due to downstream database lock timeout in inventory table',
+  },
+  {
+    timestamp: '2026-09-18 16:25:12.000',
+    serviceName: 'ingress-nginx',
+    severityText: 'INFO',
+    body: 'HealthCheck ping received from IP 10.0.4.12, status: 200 OK',
+  },
+];
 
 export default function LogPatternsPage() {
   const { data: rawData, callTool } = useClickStackWidget<any>(DEFAULT_PATTERNS);
   const data = rawData || DEFAULT_PATTERNS;
 
+  const [mode, setMode] = useState<'table' | 'patterns'>('patterns');
   const [denoise, setDenoise] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
 
@@ -62,278 +98,230 @@ export default function LogPatternsPage() {
     setTimeout(() => setCopiedSnippet(null), 2000);
   };
 
-  // 1. RAW LOGS SEARCH STREAM VIEW (clickstack_search)
-  if (data?.rows && Array.isArray(data.rows)) {
-    const rows = data.rows;
-    return (
-      <div className="flex flex-col h-screen bg-slate-950 text-slate-100 p-5 font-sans select-none overflow-hidden">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-950/80 border border-indigo-500/40 rounded-xl text-indigo-400 shadow-md shadow-indigo-950/50">
-              <Search className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-slate-100 tracking-tight">Raw Log Events Stream</h1>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-indigo-900/50 text-indigo-300 border border-indigo-700/60">
-                  {rows.length} events
-                </span>
-                {data.denoised && (
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 font-semibold">
-                    Denoised
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Real-time telemetry event stream from ClickHouse table
-              </p>
-            </div>
-          </div>
-
-          <button
-            onClick={() => {
-              callTool('clickstack_event_patterns', {
-                sourceId: data.sourceId || 'src_log_prod_01',
-                sampleSize: 5000,
-              });
-            }}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition shadow-md shadow-indigo-600/30 flex items-center gap-1.5"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Cluster Into Patterns
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto mt-4 space-y-2 pr-1 font-mono text-xs">
-          {rows.map((r: any, idx: number) => {
-            const isError = r.SeverityText === 'ERROR' || r.level === 'error';
-            const isWarn = r.SeverityText === 'WARN' || r.level === 'warn';
-
-            return (
-              <div
-                key={idx}
-                className={`p-3 rounded-xl border transition-all ${
-                  isError
-                    ? 'bg-rose-950/30 border-rose-800/60 hover:bg-rose-950/40 text-rose-200'
-                    : isWarn
-                    ? 'bg-amber-950/30 border-amber-800/60 hover:bg-amber-950/40 text-amber-200'
-                    : 'bg-slate-900/60 border-slate-800/80 hover:bg-slate-900/90 text-slate-300'
-                }`}
-              >
-                <div className="flex items-center justify-between text-[11px] text-slate-400 pb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`px-1.5 py-0.2 rounded text-[10px] font-bold uppercase ${
-                        isError
-                          ? 'bg-rose-900/80 text-rose-300'
-                          : isWarn
-                          ? 'bg-amber-900/80 text-amber-300'
-                          : 'bg-slate-800 text-slate-300'
-                      }`}
-                    >
-                      {r.SeverityText || r.level || 'INFO'}
-                    </span>
-                    <span className="font-bold text-slate-200">{r.ServiceName || r.service || 'app'}</span>
-                  </div>
-                  <span>{r.Timestamp || r.time}</span>
-                </div>
-                <div className="text-slate-100 leading-relaxed font-sans">{r.Body || r.message}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  // 2. EMERGING SIGNALS NOVELTY VIEW (clickstack_emerging_signals)
-  if (data?.emerging || data?.disappeared) {
-    const emerging = data.emerging || [];
-    const disappeared = data.disappeared || [];
-
-    return (
-      <div className="flex flex-col h-screen bg-slate-950 text-slate-100 p-5 font-sans select-none overflow-hidden">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-950/80 border border-indigo-500/40 rounded-xl text-indigo-400 shadow-md shadow-indigo-950/50">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-slate-100 tracking-tight">Emerging Signals Diff</h1>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-rose-900/50 text-rose-300 border border-rose-700/60">
-                  {emerging.length} new signals
-                </span>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800">
-                  {disappeared.length} disappeared
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Two-window Drain log novelty comparison (Current vs Baseline)
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex-1 grid grid-cols-2 gap-4 mt-4 overflow-hidden">
-          {/* Emerging / New Signals */}
-          <div className="flex flex-col gap-3 bg-slate-900/60 border border-slate-800 rounded-xl p-4 overflow-hidden">
-            <div className="flex items-center gap-2 text-rose-400 font-semibold text-xs pb-2 border-b border-slate-800">
-              <ArrowUpRight className="w-4 h-4" />
-              <span>Emerging Novel Templates ({emerging.length})</span>
-            </div>
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-              {emerging.map((item: any, i: number) => (
-                <div key={i} className="p-3 bg-slate-950/80 border border-rose-900/50 rounded-lg text-xs space-y-2">
-                  <div className="font-mono text-rose-300 font-medium">{item.pattern}</div>
-                  <div className="flex justify-between text-[11px] text-slate-400 font-mono">
-                    <span>Baseline: {item.baselineShare}</span>
-                    <span className="text-rose-400 font-bold">Current: {item.currentShare}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Disappeared Signals */}
-          <div className="flex flex-col gap-3 bg-slate-900/60 border border-slate-800 rounded-xl p-4 overflow-hidden">
-            <div className="flex items-center gap-2 text-slate-400 font-semibold text-xs pb-2 border-b border-slate-800">
-              <TrendingDown className="w-4 h-4" />
-              <span>Disappeared Templates ({disappeared.length})</span>
-            </div>
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-              {disappeared.map((item: any, i: number) => (
-                <div key={i} className="p-3 bg-slate-950/80 border border-slate-800 rounded-lg text-xs space-y-2">
-                  <div className="font-mono text-slate-300">{item.pattern}</div>
-                  <div className="flex justify-between text-[11px] text-slate-500 font-mono">
-                    <span>Baseline: {item.baselineShare}</span>
-                    <span>Current: {item.currentShare}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 3. DRAIN CLUSTERING PATTERNS VIEW (clickstack_event_patterns)
-  const patterns = data.patterns || DEFAULT_PATTERNS.patterns;
-  const displayedPatterns = denoise
-    ? patterns.filter((p: any) => !p.isSpam)
-    : patterns;
-
-  const handleInspectRaw = (whereSnippet: string) => {
-    callTool('clickstack_search', {
-      sourceId: data.sourceId || 'src_log_prod_01',
-      where: whereSnippet,
-      limit: 50,
-    });
-  };
+  const patterns = (data.patterns || []).filter((p: any) => !denoise || !p.isSpam);
+  const logRows = data.rows && Array.isArray(data.rows) ? data.rows : SAMPLE_LOG_ROWS;
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 p-5 font-sans select-none overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-950/80 border border-indigo-500/40 rounded-xl text-indigo-400 shadow-md shadow-indigo-950/50">
-            <Terminal className="w-5 h-5" />
+    <div className="flex flex-col h-screen bg-[#0b0f15] text-[#e2e8f0] font-sans select-none overflow-hidden">
+      <ClickStackHeader
+        sourceName="Logs"
+        sqlQuery="SELECT Timestamp, ServiceName, SeverityText, Body ORDER BY Timestamp DESC LIMIT 100"
+        elapsedMs={18}
+        timeRange="15m"
+      />
+
+      {/* Main Analysis Mode Split (Exact match to ClickStack / HyperDX UI) */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Sidebar: Analysis Mode & Filters */}
+        <div className="w-56 bg-[#0e141d] border-r border-[#1c2432] p-3 flex flex-col justify-between text-xs">
+          <div className="space-y-4">
+            <div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-2">
+                Analysis Mode
+              </div>
+              <div className="space-y-1 font-medium">
+                {/* Results Table Tab */}
+                <button
+                  onClick={() => setMode('table')}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-sm flex items-center justify-between text-xs transition-colors ${
+                    mode === 'table'
+                      ? 'bg-[#131924] text-slate-100 border-l-2 border-emerald-400 font-semibold'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-[#121824]'
+                  }`}
+                >
+                  <span>Results Table</span>
+                  <span className="text-[10px] text-slate-500 font-mono">{logRows.length}</span>
+                </button>
+
+                {/* Event Patterns Tab */}
+                <button
+                  onClick={() => setMode('patterns')}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-sm flex items-center justify-between text-xs transition-colors ${
+                    mode === 'patterns'
+                      ? 'bg-[#131924] text-slate-100 border-l-2 border-emerald-400 font-semibold'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-[#121824]'
+                  }`}
+                >
+                  <span>Event Patterns</span>
+                  <span className="text-[10px] text-emerald-400 font-mono">Drain 3</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-2">
+                Filters
+              </div>
+              <label className="flex items-center gap-2 px-2 py-1.5 rounded bg-[#131924] border border-[#222c3d] text-slate-300 cursor-pointer text-xs hover:border-slate-600 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={denoise}
+                  onChange={(e) => setDenoise(e.target.checked)}
+                  className="rounded border-[#1c2432] bg-[#090d13] text-emerald-500 focus:ring-0 w-3.5 h-3.5"
+                />
+                <span>Denoise Results</span>
+              </label>
+            </div>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold text-slate-100 tracking-tight">Drain Log Pattern Clustering</h1>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-indigo-900/50 text-indigo-300 border border-indigo-700/60">
-                {patterns.length} templates
-              </span>
+
+          <div className="p-2.5 rounded bg-[#121824] border border-[#1c2432] text-[11px] font-mono text-slate-400 space-y-1">
+            <div className="text-slate-500 uppercase text-[9px] font-sans font-semibold">
+              Drain Log Clustering
             </div>
-            <div className="text-xs font-mono text-slate-400 mt-0.5">
-              Sample: {(data.sampleSize || 20000).toLocaleString()} logs analyzed
-            </div>
+            <div>Scanned: <span className="text-slate-200 font-bold">{data.sampleSize?.toLocaleString() || '20,000'}</span></div>
+            <div>Templates: <span className="text-emerald-400 font-bold">{patterns.length}</span></div>
           </div>
         </div>
 
-        <button
-          onClick={() => setDenoise(!denoise)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-            denoise
-              ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300 shadow-md shadow-emerald-950/40'
-              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Filter className="w-3.5 h-3.5" />
-          {denoise ? 'Denoised (Spam Hidden)' : 'Filter Spam Templates'}
-        </button>
-      </div>
+        {/* Right Content Area */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-[#0b0f15]">
+          {/* Timeline Bar Indicator */}
+          <div className="h-6 bg-[#0e141d] border-b border-[#1c2432] flex items-center justify-between px-4 text-[10px] font-mono text-slate-500">
+            <span>{patterns.length} Clustered Patterns Found</span>
+            <span>ClickHouse Drain Algorithm</span>
+          </div>
 
-      {/* Pattern List */}
-      <div className="flex-1 overflow-y-auto mt-4 space-y-3 pr-1">
-        {displayedPatterns.map((p: any, idx: number) => {
-          return (
-            <div
-              key={idx}
-              className={`p-4 rounded-xl border transition-all ${
-                p.isAnomaly
-                  ? 'bg-rose-950/30 border-rose-800/60 shadow-md shadow-rose-950/20'
-                  : p.isSpam
-                  ? 'bg-slate-950 border-slate-900 opacity-60'
-                  : 'bg-slate-900/60 border-slate-800/80 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs font-bold text-slate-400">#{idx + 1}</span>
-                  {p.isAnomaly && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-900/80 text-rose-300 border border-rose-700">
-                      <ShieldAlert className="w-3 h-3" /> ANOMALY
-                    </span>
-                  )}
-                  {p.isSpam && (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-400">
-                      SPAM (70%+)
-                    </span>
-                  )}
-                </div>
+          {mode === 'patterns' ? (
+            /* Patterns List View */
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5 font-mono text-xs">
+              {patterns.map((p: any, idx: number) => {
+                const isAnomaly = p.isAnomaly;
+                const isSpam = p.isSpam;
 
-                <div className="flex items-center gap-3 font-mono text-xs">
-                  <span className="text-slate-400">{p.sampleCount.toLocaleString()} events</span>
-                  <span className="font-bold text-indigo-300">{p.percentage}%</span>
-                </div>
-              </div>
-
-              {/* Template Body */}
-              <div className="mt-2.5 p-2.5 bg-slate-950/80 rounded-lg border border-slate-800/80 font-mono text-xs text-slate-200 select-text">
-                {p.template}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-800/60">
-                <div className="text-[11px] font-mono text-slate-500">
-                  Filter snippet: <span className="text-slate-400">{p.whereSnippet}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleCopy(p.whereSnippet)}
-                    className="p-1.5 rounded-md hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition"
-                    title="Copy Lucene filter"
+                return (
+                  <div
+                    key={idx}
+                    className={`p-3 rounded-md border transition-all ${
+                      isAnomaly
+                        ? 'bg-[#141219] border-rose-800/60 hover:border-rose-600'
+                        : isSpam
+                        ? 'bg-[#0e141d] border-[#1c2432] opacity-75'
+                        : 'bg-[#0e141d] border-[#1c2432] hover:border-[#2b374d]'
+                    }`}
                   >
-                    {copiedSnippet === p.whereSnippet ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleInspectRaw(p.whereSnippet)}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-md text-xs font-medium transition"
-                  >
-                    <Search className="w-3 h-3" /> Browse Stream
-                  </button>
-                </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0 space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500 font-bold">#{idx + 1}</span>
+                          {isAnomaly && (
+                            <span className="px-1.5 py-0.2 rounded bg-rose-950 text-rose-400 border border-rose-800 text-[10px] font-bold">
+                              ANOMALY
+                            </span>
+                          )}
+                          {isSpam && (
+                            <span className="px-1.5 py-0.2 rounded bg-slate-900 text-slate-500 border border-slate-800 text-[10px]">
+                              NOISY RECURRING
+                            </span>
+                          )}
+                          <span className="text-slate-400 text-[11px]">
+                            {p.sampleCount?.toLocaleString()} occurrences ({p.percentage}%)
+                          </span>
+                        </div>
+
+                        {/* Template with ClickStack token highlights */}
+                        <div className="text-slate-200 text-xs font-mono leading-relaxed break-all bg-[#090d13] p-2 rounded border border-[#18212e]">
+                          {p.template.split(/(<\*?>|<[^>]+>)/g).map((segment: string, sIdx: number) =>
+                            segment.startsWith('<') && segment.endsWith('>') ? (
+                              <span
+                                key={sIdx}
+                                className="px-1 py-0.5 mx-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-700/60 font-bold text-[11px]"
+                              >
+                                {segment}
+                              </span>
+                            ) : (
+                              <span key={sIdx}>{segment}</span>
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex flex-col gap-1.5 flex-shrink-0">
+                        <button
+                          onClick={() => handleCopy(p.whereSnippet)}
+                          className="px-2 py-1 bg-[#131924] hover:bg-[#1c2432] border border-[#222c3d] rounded text-[11px] text-slate-300 flex items-center gap-1 transition-colors"
+                          title="Copy Lucene Filter Snippet"
+                        >
+                          {copiedSnippet === p.whereSnippet ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-slate-500" />
+                          )}
+                          <span>Copy Filter</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            callTool('clickstack_search', {
+                              sourceId: data.sourceId || 'src_log_prod_01',
+                              where: p.whereSnippet,
+                            });
+                          }}
+                          className="px-2 py-1 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/80 rounded text-[11px] text-emerald-300 flex items-center gap-1 transition-colors"
+                        >
+                          <Search className="w-3 h-3" />
+                          <span>Filter Events</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* Results Table View (Exact match to ClickStack table in screenshot) */
+            <div className="flex-1 overflow-auto p-4">
+              <div className="border border-[#1c2432] rounded-md bg-[#0e141d] overflow-hidden">
+                <table className="w-full text-left border-collapse text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-[#1c2432] bg-[#121824] text-slate-400 text-[11px]">
+                      <th className="py-2.5 px-3 border-r border-[#1c2432] w-52">Timestamp (Local)</th>
+                      <th className="py-2.5 px-3 border-r border-[#1c2432] w-40">ServiceName</th>
+                      <th className="py-2.5 px-3 border-r border-[#1c2432] w-28">SeverityText</th>
+                      <th className="py-2.5 px-3">Body</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1c2432]">
+                    {logRows.map((row: any, rIdx: number) => {
+                      const isError = row.severityText === 'ERROR';
+                      const isWarn = row.severityText === 'WARN';
+
+                      return (
+                        <tr key={rIdx} className="hover:bg-[#131924] transition-colors">
+                          <td className="py-2 px-3 border-r border-[#1c2432] text-slate-400 text-[11px] whitespace-nowrap">
+                            {row.timestamp}
+                          </td>
+                          <td className="py-2 px-3 border-r border-[#1c2432]">
+                            <span className="px-1.5 py-0.5 rounded bg-[#131924] border border-[#222c3d] text-emerald-400 text-[11px]">
+                              {row.serviceName}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 border-r border-[#1c2432]">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                isError
+                                  ? 'bg-rose-950 text-rose-400 border border-rose-800'
+                                  : isWarn
+                                  ? 'bg-amber-950 text-amber-400 border border-amber-800'
+                                  : 'bg-slate-900 text-slate-400'
+                              }`}
+                            >
+                              {row.severityText}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-slate-200 break-all text-[11px]">
+                            {row.body}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
     </div>
   );
