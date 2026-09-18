@@ -2,19 +2,24 @@
 
 import React, { useState } from 'react';
 import { useClickStackWidget } from '../../hooks/useClickStackWidget';
+import { ClickStackHeader } from '../../components/ClickStackHeader';
 import {
   Clock,
   Layers,
   AlertCircle,
   CheckCircle2,
   ChevronRight,
+  ChevronDown,
   Activity,
   Zap,
   Flame,
   Database,
-  ArrowRight,
-  TrendingUp,
+  Search,
+  Filter,
   SlidersHorizontal,
+  FileText,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 const DEFAULT_TRACE = {
@@ -32,7 +37,7 @@ const DEFAULT_TRACE = {
       startOffsetMs: 0,
       durationMs: 2412.35,
       durationNs: 2412350000,
-      attributes: { 'http.method': 'POST', 'http.status_code': '500' },
+      attributes: { 'http.method': 'POST', 'http.status_code': '500', 'user.id': 'usr_94821', 'cloud.region': 'us-east-1' },
       logs: [
         { timestamp: '18:22:00.100', level: 'INFO', message: 'Order checkout initiated for cart #84210' },
         { timestamp: '18:22:02.400', level: 'ERROR', message: 'Downstream database lock timeout exceeded' },
@@ -47,7 +52,7 @@ const DEFAULT_TRACE = {
       startOffsetMs: 12.4,
       durationMs: 45.2,
       durationNs: 45200000,
-      attributes: { 'http.status_code': '200' },
+      attributes: { 'http.method': 'POST', 'http.status_code': '200', 'auth.type': 'Bearer' },
       logs: [],
     },
     {
@@ -80,7 +85,7 @@ const DEFAULT_TRACE = {
       durationMs: 2200.0,
       durationNs: 2200000000,
       isCriticalPath: true,
-      attributes: { 'db.table': 'inventory' },
+      attributes: { 'db.table': 'inventory', 'db.operation': 'SELECT' },
       logs: [],
     },
     {
@@ -92,10 +97,18 @@ const DEFAULT_TRACE = {
       startOffsetMs: 2280.0,
       durationMs: 120.0,
       durationNs: 120000000,
-      attributes: { 'payment.provider': 'stripe' },
+      attributes: { 'payment.provider': 'stripe', 'http.status_code': '200' },
       logs: [],
     },
   ],
+};
+
+const SERVICE_COLORS: Record<string, { bg: string; text: string; bar: string }> = {
+  'checkout-service': { bg: 'bg-emerald-950/60', text: 'text-emerald-400', bar: '#10b981' },
+  'auth-service': { bg: 'bg-sky-950/60', text: 'text-sky-400', bar: '#38bdf8' },
+  'inventory-service': { bg: 'bg-rose-950/60', text: 'text-rose-400', bar: '#f43f5e' },
+  'postgres-db': { bg: 'bg-amber-950/60', text: 'text-amber-400', bar: '#f59e0b' },
+  'payment-service': { bg: 'bg-indigo-950/60', text: 'text-indigo-400', bar: '#818cf8' },
 };
 
 export default function TraceWaterfallPage() {
@@ -104,378 +117,404 @@ export default function TraceWaterfallPage() {
 
   const [selectedSpan, setSelectedSpan] = useState<any>(null);
   const [filter, setFilter] = useState('');
+  const [copied, setCopied] = useState(false);
 
-  // 1. TOP TIME CONSUMING OPERATIONS VIEW (clickstack_trace_top_time_consuming_operations)
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // 1. TOP TIME CONSUMING OPERATIONS SUB-VIEW
   if (data?.operations && Array.isArray(data.operations)) {
     const ops = data.operations;
     const totalTraces = data.totalTracesAnalyzed || 0;
     const parentFilter = data.parentFilter || 'All parent spans';
 
     return (
-      <div className="flex flex-col h-screen bg-slate-950 text-slate-100 p-5 font-sans select-none overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-amber-950/80 border border-amber-500/40 text-amber-400 shadow-md shadow-amber-950/50">
-              <Flame className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-bold text-base text-slate-100 tracking-tight">
-                  Top Time-Consuming Operations
-                </h1>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-amber-900/50 text-amber-300 border border-amber-700/60">
-                  {ops.length} bottlenecks ranked
-                </span>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800">
-                  {totalTraces.toLocaleString()} traces analyzed
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5 font-mono truncate max-w-xl">
-                Parent Filter: <span className="text-slate-200">{parentFilter}</span>
-              </p>
-            </div>
+      <div className="flex flex-col h-screen bg-[#0b0f15] text-[#e2e8f0] font-sans select-none overflow-hidden">
+        <ClickStackHeader
+          sourceName="Traces"
+          sqlQuery="SELECT SpanName, sum(Duration), count() GROUP BY SpanName ORDER BY sum(Duration) DESC"
+          searchFilter={parentFilter}
+          elapsedMs={24}
+          actionButtonText="Inspect Trace"
+          actionButtonIcon={<Activity className="w-3 h-3" />}
+          onRun={() => {
+            callTool('clickstack_trace_waterfall', {
+              sourceId: data.sourceId || 'src_trace_prod_01',
+              pickFilter: parentFilter,
+              pickBy: 'slowest',
+            });
+          }}
+        />
+
+        {/* Action / Context Bar */}
+        <div className="flex items-center justify-between px-4 py-2.5 bg-[#0e141d] border-b border-[#1c2432] text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="font-semibold text-slate-200">Top Time-Consuming Operations</span>
+            <span className="px-2 py-0.5 rounded bg-[#131924] border border-[#222c3d] text-slate-400 font-mono text-[11px]">
+              {ops.length} ranked
+            </span>
+            <span className="text-slate-500 font-mono text-[11px]">
+              across {totalTraces.toLocaleString()} traces
+            </span>
           </div>
 
-          <button
-            onClick={() => {
-              callTool('clickstack_trace_waterfall', {
-                sourceId: data.sourceId || 'src_trace_prod_01',
-                pickFilter: parentFilter,
-                pickBy: 'slowest',
-              });
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium text-xs bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-md shadow-indigo-600/30"
-          >
-            <Activity className="w-3.5 h-3.5" />
-            Inspect Slowest Trace
-          </button>
+          <div className="text-[11px] text-slate-400 font-mono">
+            ClickHouse Columnar Latency Breakdown
+          </div>
         </div>
 
-        {/* Bottleneck Summary Banner */}
-        {ops[0] && (
-          <div className="my-4 p-3.5 rounded-xl bg-gradient-to-r from-rose-950/40 to-slate-900 border border-rose-800/40 flex items-center justify-between shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-rose-950/80 border border-rose-600/60 text-rose-400">
-                <Zap className="w-4 h-4" />
-              </div>
-              <div>
-                <div className="text-xs text-rose-300 font-semibold uppercase tracking-wider">
-                  Primary Latency Culprit
-                </div>
-                <div className="text-sm font-bold text-slate-100 font-mono mt-0.5">
-                  {ops[0].operationName}
-                </div>
-                <div className="text-xs text-slate-400">
-                  Accounts for <span className="text-rose-400 font-bold">{ops[0].percentageOfTotalTime}%</span> of total transaction duration across all analyzed traces
-                </div>
-              </div>
-            </div>
+        {/* Operations Table */}
+        <div className="flex-1 overflow-auto p-4">
+          <div className="border border-[#1c2432] rounded-md bg-[#0e141d] overflow-hidden">
+            <table className="w-full text-left border-collapse text-xs font-mono">
+              <thead>
+                <tr className="border-b border-[#1c2432] bg-[#121824] text-slate-400 text-[11px]">
+                  <th className="py-2.5 px-3 w-12 text-center">RANK</th>
+                  <th className="py-2.5 px-3">OPERATION</th>
+                  <th className="py-2.5 px-3">SERVICE</th>
+                  <th className="py-2.5 px-3 w-64">TIME CONTRIBUTION</th>
+                  <th className="py-2.5 px-3 text-right">AVG LATENCY</th>
+                  <th className="py-2.5 px-3 text-right">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1c2432]">
+                {ops.map((op: any, index: number) => {
+                  const isTop = index === 0;
+                  const pct = op.percentageOfTotalTime || 0;
 
-            <button
-              onClick={() => {
-                callTool('clickstack_event_deltas', {
-                  sourceId: data.sourceId || 'src_trace_prod_01',
-                  target: { where: `SpanName = '${ops[0].operationName}'`, whereLanguage: 'sql' },
-                  baseline: { where: `SpanName != '${ops[0].operationName}'`, whereLanguage: 'sql' },
-                });
-              }}
-              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium transition-all shadow-md shadow-rose-600/30 flex items-center gap-1.5"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              Triage Divergence
-            </button>
-          </div>
-        )}
-
-        {/* Operations Breakdown Table */}
-        <div className="flex-1 overflow-y-auto pr-1 space-y-3">
-          {ops.map((op: any, index: number) => {
-            const isTop = index === 0;
-            const percentage = op.percentageOfTotalTime || 0;
-
-            return (
-              <div
-                key={op.operationName}
-                className={`p-4 rounded-xl border transition-all ${
-                  isTop
-                    ? 'bg-slate-900/90 border-rose-500/50 shadow-md shadow-rose-950/20'
-                    : 'bg-slate-900/60 border-slate-800/80 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-slate-400">#{index + 1}</span>
-                      <span className="font-mono text-sm font-bold text-slate-100 truncate">
-                        {op.operationName}
-                      </span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-indigo-300 border border-slate-700">
-                        {op.serviceName}
-                      </span>
-                    </div>
-
-                    {/* Progress Bar of Time Contribution */}
-                    <div className="mt-2.5 space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono">
-                        <span className="text-slate-400">Time Contribution</span>
-                        <span className={`font-bold ${isTop ? 'text-rose-400' : 'text-slate-200'}`}>
-                          {percentage}% of total trace time
-                        </span>
-                      </div>
-                      <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
-                        <div
-                          className={`h-full rounded-full ${
-                            percentage > 50
-                              ? 'bg-gradient-to-r from-rose-500 to-amber-500'
-                              : percentage > 15
-                              ? 'bg-gradient-to-r from-amber-500 to-indigo-500'
-                              : 'bg-indigo-500'
-                          }`}
-                          style={{ width: `${Math.min(100, Math.max(2, percentage))}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Operation Stats Cards */}
-                  <div className="flex items-center gap-3 flex-shrink-0 text-right">
-                    <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800 font-mono">
-                      <div className="text-[10px] text-slate-500">AVG DURATION</div>
-                      <div className="text-xs font-bold text-slate-200">
-                        {op.averageDurationMs?.toFixed(1) || op.averageDurationMs} ms
-                      </div>
-                    </div>
-
-                    <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800 font-mono">
-                      <div className="text-[10px] text-slate-500">CALL COUNT</div>
-                      <div className="text-xs font-bold text-slate-300">
-                        {op.callCount?.toLocaleString()} calls
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        callTool('clickstack_trace_waterfall', {
-                          sourceId: data.sourceId || 'src_trace_prod_01',
-                          pickFilter: `SpanName:"${op.operationName}"`,
-                          pickBy: 'slowest',
-                        });
-                      }}
-                      className="p-2 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 transition-all flex items-center justify-center"
-                      title="Inspect sample trace with this operation"
+                  return (
+                    <tr
+                      key={op.operationName}
+                      className="hover:bg-[#131924] transition-colors"
                     >
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+                      <td className="py-2.5 px-3 text-center text-slate-500 font-bold">
+                        #{index + 1}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className={`font-semibold ${isTop ? 'text-rose-400' : 'text-slate-200'}`}>
+                          {op.operationName}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="px-1.5 py-0.5 rounded bg-[#131924] border border-[#222c3d] text-slate-300 text-[11px]">
+                          {op.serviceName}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-2 bg-[#090d13] border border-[#1b2330] rounded-sm overflow-hidden">
+                            <div
+                              className={`h-full ${
+                                pct > 50
+                                  ? 'bg-rose-500'
+                                  : pct > 20
+                                  ? 'bg-amber-500'
+                                  : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.max(2, pct)}%` }}
+                            />
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-300 w-12 text-right">
+                            {pct}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-slate-200">
+                        {op.averageDurationMs?.toFixed(1) || op.averageDurationMs} ms
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          onClick={() => {
+                            callTool('clickstack_event_deltas', {
+                              sourceId: data.sourceId || 'src_trace_prod_01',
+                              target: { where: `SpanName = '${op.operationName}'`, whereLanguage: 'sql' },
+                              baseline: { where: `SpanName != '${op.operationName}'`, whereLanguage: 'sql' },
+                            });
+                          }}
+                          className="px-2.5 py-1 bg-[#131924] hover:bg-[#1c2432] border border-[#222c3d] hover:border-slate-600 rounded text-[11px] text-slate-200 transition-colors inline-flex items-center gap-1"
+                        >
+                          <SlidersHorizontal className="w-3 h-3 text-emerald-400" />
+                          <span>Triage Divergence</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );
   }
 
-  // 2. TRACE WATERFALL VIEW (clickstack_trace_waterfall)
-  const spans = data.spans || DEFAULT_TRACE.spans;
-  const totalDuration = data.durationMs || DEFAULT_TRACE.durationMs || 1;
-  const rootService = data.rootService || spans[0]?.serviceName || 'unknown-service';
-  const traceId = data.traceId || DEFAULT_TRACE.traceId;
+  // 2. FULL TRACE WATERFALL VIEW
+  const spans = data.spans || [];
+  const maxDuration = data.durationMs || 2500;
 
-  const currentSelected = selectedSpan || spans.find((s: any) => s.statusCode === 'error') || spans[0];
-
-  const filteredSpans = spans.filter((s: any) =>
-    filter
-      ? s.serviceName.toLowerCase().includes(filter.toLowerCase()) ||
-        s.spanName.toLowerCase().includes(filter.toLowerCase())
-      : true
-  );
-
-  const handleIsolate = (span: any) => {
-    callTool('clickstack_event_deltas', {
-      sourceId: data.sourceId || 'src_trace_prod_01',
-      target: { where: `SpanName = '${span.spanName}' AND Duration >= ${span.durationNs}`, whereLanguage: 'sql' },
-      baseline: { where: `SpanName = '${span.spanName}' AND Duration < ${span.durationNs}`, whereLanguage: 'sql' },
-    });
-  };
+  const filteredSpans = filter
+    ? spans.filter(
+        (s: any) =>
+          s.spanName.toLowerCase().includes(filter.toLowerCase()) ||
+          s.serviceName.toLowerCase().includes(filter.toLowerCase())
+      )
+    : spans;
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 p-5 font-sans select-none overflow-hidden">
-      {/* Top Bar */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+    <div className="flex flex-col h-screen bg-[#0b0f15] text-[#e2e8f0] font-sans select-none overflow-hidden">
+      <ClickStackHeader
+        sourceName="Traces"
+        sqlQuery={`SELECT TraceId, SpanId, Duration, ServiceName, SpanName, StatusCode WHERE TraceId = '${data.traceId?.substring(0, 8)}...'`}
+        elapsedMs={16}
+        timeRange="Recent"
+        secondaryActions={
+          <button
+            onClick={() => {
+              callTool('clickstack_trace_top_time_consuming_operations', {
+                sourceId: data.sourceId || 'src_trace_prod_01',
+              });
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 bg-[#131924] hover:bg-[#182030] border border-[#222c3d] rounded-md text-[11px] text-slate-300 transition-colors"
+          >
+            <Flame className="w-3 h-3 text-amber-400" />
+            <span>Top Bottlenecks</span>
+          </button>
+        }
+      />
+
+      {/* Trace Metadata Ribbon */}
+      <div className="flex items-center justify-between px-4 py-2 bg-[#0e141d] border-b border-[#1c2432] text-xs">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-950/80 border border-indigo-500/40 rounded-xl text-indigo-400 shadow-md shadow-indigo-950/50">
-            <Activity className="w-5 h-5" />
+          <div className="flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
+            <span>Trace ID:</span>
+            <span className="text-slate-200 font-bold">{data.traceId}</span>
+            <button
+              onClick={() => copyToClipboard(data.traceId)}
+              className="p-1 hover:text-slate-100 transition-colors"
+              title="Copy Trace ID"
+            >
+              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-slate-500" />}
+            </button>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-base text-slate-100 font-mono tracking-tight">{rootService}</span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-800/60">
-                ERROR 500
-              </span>
-            </div>
-            <div className="text-xs font-mono text-slate-400 flex items-center gap-2 mt-0.5">
-              Trace: <span className="text-slate-200">{traceId}</span>
-            </div>
+
+          <div className="h-3.5 w-px bg-[#222c3d]" />
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 text-[11px]">Root:</span>
+            <span className="px-1.5 py-0.5 rounded bg-[#131924] border border-[#222c3d] text-emerald-400 font-mono text-[11px]">
+              {data.rootService}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 text-[11px]">Duration:</span>
+            <span className="font-mono font-bold text-rose-400 text-[11px]">
+              {data.durationMs?.toFixed(2)} ms
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 text-[11px]">Spans:</span>
+            <span className="font-mono text-slate-300 text-[11px]">{spans.length}</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 font-mono text-xs">
-          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-            <Clock className="w-3.5 h-3.5 text-emerald-400" /> {totalDuration.toFixed(1)} ms
-          </span>
-          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-            <Layers className="w-3.5 h-3.5 text-cyan-400" /> {spans.length} Spans
-          </span>
+        {/* Filter Input */}
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Filter spans..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-48 pl-7 pr-2 py-0.5 bg-[#090d13] border border-[#1b2330] focus:border-emerald-500/60 rounded text-xs text-slate-200 placeholder-slate-500 font-mono outline-none"
+          />
         </div>
       </div>
 
-      {/* Filter and Timeline Ruler */}
-      <div className="flex items-center justify-between py-3 border-b border-slate-900 gap-4">
-        <input
-          type="text"
-          placeholder="Filter spans by name or service..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 w-80 focus:outline-none focus:border-indigo-500 transition-colors"
-        />
+      {/* Main Workspace: Left Waterfall + Right Span Detail Drawer */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Waterfall Flamegraph */}
+        <div className="flex-1 flex flex-col min-w-0 border-r border-[#1c2432]">
+          {/* Gantt Time Axis Ruler */}
+          <div className="h-6 bg-[#0e141d] border-b border-[#1c2432] flex items-center pl-72 pr-4 font-mono text-[10px] text-slate-500 relative select-none">
+            <div className="absolute left-72">0ms</div>
+            <div className="absolute left-[35%]">{(maxDuration * 0.25).toFixed(0)}ms</div>
+            <div className="absolute left-[55%]">{(maxDuration * 0.5).toFixed(0)}ms</div>
+            <div className="absolute left-[75%]">{(maxDuration * 0.75).toFixed(0)}ms</div>
+            <div className="absolute right-4">{maxDuration.toFixed(0)}ms</div>
+          </div>
 
-        <div className="flex-1 flex justify-between text-[10px] font-mono text-slate-500 px-2">
-          <span>0ms</span>
-          <span>{(totalDuration * 0.25).toFixed(0)}ms</span>
-          <span>{(totalDuration * 0.5).toFixed(0)}ms</span>
-          <span>{(totalDuration * 0.75).toFixed(0)}ms</span>
-          <span>{totalDuration.toFixed(0)}ms</span>
-        </div>
-      </div>
+          {/* Spans Rows */}
+          <div className="flex-1 overflow-y-auto divide-y divide-[#131924]">
+            {filteredSpans.map((span: any, index: number) => {
+              const depth = span.parentSpanId ? 1 : 0;
+              const isSelected = selectedSpan?.spanId === span.spanId;
+              const hasError = span.statusCode === 'error';
+              const sColor = SERVICE_COLORS[span.serviceName] || {
+                bg: 'bg-slate-900',
+                text: 'text-slate-300',
+                bar: '#64748b',
+              };
 
-      {/* Main Content Area */}
-      <div className="flex-1 grid grid-cols-12 gap-4 mt-4 overflow-hidden">
-        {/* Waterfall Span Tree */}
-        <div className="col-span-7 flex flex-col gap-2 overflow-y-auto pr-1">
-          {filteredSpans.map((span: any) => {
-            const isSelected = currentSelected?.spanId === span.spanId;
-            const isError = span.statusCode === 'error';
-            const leftPct = (span.startOffsetMs / totalDuration) * 100;
-            const widthPct = Math.max(2, (span.durationMs / totalDuration) * 100);
+              const leftPct = (span.startOffsetMs / maxDuration) * 100;
+              const widthPct = Math.max(1.2, (span.durationMs / maxDuration) * 100);
 
-            return (
-              <div
-                key={span.spanId}
-                onClick={() => setSelectedSpan(span)}
-                className={`p-2.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
-                  isSelected
-                    ? 'bg-indigo-950/70 border-indigo-500 text-white ring-1 ring-indigo-500 shadow-sm'
-                    : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {isError ? (
+              return (
+                <div
+                  key={span.spanId}
+                  onClick={() => setSelectedSpan(span)}
+                  className={`flex items-center h-10 hover:bg-[#121824] cursor-pointer transition-colors ${
+                    isSelected ? 'bg-[#151c2a] border-l-2 border-emerald-500' : ''
+                  }`}
+                >
+                  {/* Left Metadata Column */}
+                  <div
+                    className="w-72 flex-shrink-0 flex items-center gap-2 pl-3 pr-2 truncate"
+                    style={{ paddingLeft: `${12 + depth * 16}px` }}
+                  >
+                    {hasError ? (
                       <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
                     ) : (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
                     )}
-                    <span className="font-mono font-bold text-slate-200 truncate">{span.serviceName}</span>
-                    <span className="text-slate-400 truncate text-[11px]">{span.spanName}</span>
-                    {span.isCriticalPath && (
-                      <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 text-[9px] font-mono border border-rose-500/30">
-                        CRITICAL PATH
-                      </span>
-                    )}
-                  </div>
-                  <span className="font-mono font-bold text-slate-300 text-xs flex-shrink-0">
-                    {span.durationMs.toFixed(1)} ms
-                  </span>
-                </div>
 
-                {/* Timeline Gantt Bar */}
-                <div className="relative h-2 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800/80">
-                  <div
-                    className={`absolute h-full rounded-full ${
-                      span.isCriticalPath
-                        ? 'bg-rose-500 shadow-sm shadow-rose-500/50'
-                        : isError
-                        ? 'bg-amber-500'
-                        : 'bg-indigo-500'
-                    }`}
-                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                  />
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${sColor.bg} ${sColor.text} border border-[#222c3d] truncate`}>
+                      {span.serviceName}
+                    </span>
+
+                    <span className="font-mono text-xs text-slate-200 truncate" title={span.spanName}>
+                      {span.spanName}
+                    </span>
+                  </div>
+
+                  {/* Right Timeline Bar Column */}
+                  <div className="flex-1 relative h-full flex items-center pr-4">
+                    {/* Vertical grid guidelines */}
+                    <div className="absolute inset-y-0 left-0 w-px bg-[#18202d]" />
+                    <div className="absolute inset-y-0 left-[25%] w-px bg-[#141b26]" />
+                    <div className="absolute inset-y-0 left-[50%] w-px bg-[#141b26]" />
+                    <div className="absolute inset-y-0 left-[75%] w-px bg-[#141b26]" />
+
+                    {/* Gantt Span Bar */}
+                    <div
+                      className={`h-5 rounded-sm flex items-center px-1.5 font-mono text-[10px] truncate shadow-sm transition-all ${
+                        hasError ? 'bg-rose-900/80 border border-rose-500/80 text-rose-200' : 'bg-emerald-950/80 border border-emerald-500/60 text-emerald-200'
+                      }`}
+                      style={{
+                        marginLeft: `${leftPct}%`,
+                        width: `${widthPct}%`,
+                      }}
+                    >
+                      <span className="truncate">{span.durationMs?.toFixed(1)}ms</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
 
-        {/* Selected Span Details & Correlated Logs */}
-        <div className="col-span-5 flex flex-col gap-3 bg-slate-900/80 border border-slate-800 rounded-xl p-4 overflow-hidden shadow-sm">
-          {currentSelected ? (
-            <>
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                <div>
-                  <div className="font-mono font-bold text-sm text-slate-100 truncate">
-                    {currentSelected.spanName}
+        {/* Right Detail / Correlated Log Drawer */}
+        <div className="w-96 bg-[#0e141d] flex flex-col flex-shrink-0">
+          <div className="p-3 border-b border-[#1c2432] flex items-center justify-between">
+            <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-200">
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Span Attributes & Correlated Logs</span>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3 space-y-4 text-xs font-mono">
+            {selectedSpan ? (
+              <>
+                {/* Span Quick Specs */}
+                <div className="space-y-1.5 p-2.5 rounded bg-[#131924] border border-[#1c2432]">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wider font-sans">
+                    Selected Span
                   </div>
-                  <div className="text-xs text-indigo-400 font-mono mt-0.5">{currentSelected.serviceName}</div>
+                  <div className="text-slate-100 font-bold truncate">
+                    {selectedSpan.spanName}
+                  </div>
+                  <div className="flex items-center gap-2 pt-1 text-[11px]">
+                    <span className="text-slate-400">Duration:</span>
+                    <span className="text-rose-400 font-bold">{selectedSpan.durationMs?.toFixed(2)} ms</span>
+                    <span className="text-slate-500">|</span>
+                    <span className="text-slate-400">Status:</span>
+                    <span className={selectedSpan.statusCode === 'error' ? 'text-rose-400' : 'text-emerald-400'}>
+                      {selectedSpan.statusCode}
+                    </span>
+                  </div>
                 </div>
-                <button
-                  onClick={() => handleIsolate(currentSelected)}
-                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium transition shadow-sm shadow-rose-600/30 flex items-center gap-1"
-                >
-                  <Zap className="w-3 h-3" /> Isolate Root Cause
-                </button>
-              </div>
 
-              {/* Attributes Section */}
-              <div className="space-y-1.5">
-                <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold">Span Attributes</span>
-                <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 text-xs font-mono space-y-1 max-h-40 overflow-y-auto">
-                  {Object.entries(currentSelected.attributes || {}).map(([k, v]: [string, any]) => (
-                    <div key={k} className="flex items-center justify-between">
-                      <span className="text-slate-400">{k}:</span>
-                      <span className="text-slate-200 truncate max-w-[200px]">{String(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Correlated Logs */}
-              <div className="flex-1 flex flex-col space-y-1.5 overflow-hidden">
-                <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold">
-                  Correlated Span Logs ({currentSelected.logs?.length || 0})
-                </span>
-                <div className="flex-1 bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 overflow-y-auto space-y-2 text-xs font-mono">
-                  {(currentSelected.logs || []).length === 0 ? (
-                    <div className="text-slate-500 text-center py-4">No correlated logs emitted on this span</div>
-                  ) : (
-                    currentSelected.logs.map((log: any, i: number) => (
-                      <div
-                        key={i}
-                        className={`p-2 rounded border ${
-                          log.level === 'ERROR'
-                            ? 'bg-rose-950/40 border-rose-800/60 text-rose-300'
-                            : log.level === 'WARN'
-                            ? 'bg-amber-950/40 border-amber-800/60 text-amber-300'
-                            : 'bg-slate-900/60 border-slate-800 text-slate-300'
-                        }`}
-                      >
-                        <div className="flex justify-between text-[10px] text-slate-400 pb-1">
-                          <span>{log.timestamp}</span>
-                          <span className="font-bold uppercase">{log.level}</span>
-                        </div>
-                        <p className="text-[11px] leading-relaxed">{log.message}</p>
+                {/* Attributes Table */}
+                <div>
+                  <div className="text-[11px] text-slate-400 font-semibold mb-1.5">
+                    Attributes ({Object.keys(selectedSpan.attributes || {}).length})
+                  </div>
+                  <div className="border border-[#1c2432] rounded bg-[#090d13] divide-y divide-[#161f2c]">
+                    {Object.entries(selectedSpan.attributes || {}).map(([k, v]: [string, any]) => (
+                      <div key={k} className="p-2 flex flex-col gap-0.5">
+                        <span className="text-slate-500 text-[10px] truncate">{k}</span>
+                        <span className="text-emerald-300 text-[11px] break-all">{String(v)}</span>
                       </div>
-                    ))
+                    ))}
+                  </div>
+                </div>
+
+                {/* Correlated Logs */}
+                <div>
+                  <div className="text-[11px] text-slate-400 font-semibold mb-1.5 flex items-center justify-between">
+                    <span>Correlated Logs</span>
+                    <span className="text-[10px] text-slate-500">
+                      {selectedSpan.logs?.length || 0} events
+                    </span>
+                  </div>
+
+                  {selectedSpan.logs && selectedSpan.logs.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {selectedSpan.logs.map((log: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="p-2 rounded bg-[#090d13] border border-[#1c2432] space-y-1"
+                        >
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-slate-500">{log.timestamp}</span>
+                            <span
+                              className={`px-1 rounded text-[9px] font-bold ${
+                                log.level === 'ERROR'
+                                  ? 'bg-rose-950 text-rose-400 border border-rose-800'
+                                  : log.level === 'WARN'
+                                  ? 'bg-amber-950 text-amber-400 border border-amber-800'
+                                  : 'bg-slate-900 text-slate-300'
+                              }`}
+                            >
+                              {log.level}
+                            </span>
+                          </div>
+                          <div className="text-slate-200 text-[11px] leading-relaxed">
+                            {log.message}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-slate-500 text-[11px] border border-dashed border-[#1c2432] rounded">
+                      No inline logs correlated to this span
+                    </div>
                   )}
                 </div>
+              </>
+            ) : (
+              <div className="p-8 text-center text-slate-500 space-y-2">
+                <Layers className="w-6 h-6 text-slate-600 mx-auto" />
+                <p>Click any span on the waterfall to inspect attributes and correlated ClickHouse logs</p>
               </div>
-            </>
-          ) : (
-            <div className="h-full flex items-center justify-center text-slate-500 text-xs">
-              Select a span from the waterfall to inspect details
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
