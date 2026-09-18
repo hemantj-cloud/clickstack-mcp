@@ -34,7 +34,7 @@ async function queryClickHouse(sql) {
   return new Promise((resolve, reject) => {
     const postData = sql;
     const req = http.request(
-      'http://localhost:8123/?format=JSONEachRow',
+      'http://localhost:8123/?default_format=JSONEachRow',
       {
         method: 'POST',
         headers: {
