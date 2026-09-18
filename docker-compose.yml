@@ -1,30 +1,34 @@
 name: clickstack
 
 services:
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.3-alpine
-    container_name: clickstack-clickhouse
+  clickstack:
+    image: clickhouse/clickstack-local:latest
+    container_name: clickstack-local
     restart: unless-stopped
     ports:
+      - "8080:8080"
       - "8123:8123"
-      # Port 9000 (native binary protocol) omitted — MCP uses HTTP only (:8123)
+      - "9002:9000"
+      - "4317:4317"
+      - "4318:4318"
     environment:
+      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "1"
       CLICKHOUSE_DB: otel
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: ""
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
+      - ./docker/clickhouse/users.d/allow-external.xml:/etc/clickhouse-server/users.d/allow-external.xml
       - ./docker/clickhouse/initdb.d:/docker-entrypoint-initdb.d
-      - clickhouse_data:/var/lib/clickhouse
+      - clickstack_data:/var/lib/clickhouse
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
-      interval: 3s
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 4s
       timeout: 3s
-      retries: 10
+      retries: 15
 
 volumes:
-  clickhouse_data:
+  clickstack_data:

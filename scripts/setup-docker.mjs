@@ -1,5 +1,5 @@
 /**
- * One-click ClickHouse Docker Setup & Health Verification
+ * One-click ClickStack Docker Setup & Health Verification
  * Designed for frictionless collaborator onboarding.
  */
 
@@ -30,11 +30,24 @@ function pingClickHouse() {
   });
 }
 
+function pingHyperDX() {
+  return new Promise((resolve) => {
+    const req = http.get('http://localhost:8080/api/health', (res) => {
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(1500, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
 async function queryClickHouse(sql) {
   return new Promise((resolve, reject) => {
     const postData = sql;
     const req = http.request(
-      'http://localhost:8123/?format=JSONEachRow',
+      'http://localhost:8123/?default_format=JSONEachRow',
       {
         method: 'POST',
         headers: {
@@ -67,7 +80,7 @@ async function queryClickHouse(sql) {
 
 async function main() {
   console.log('\n=============================================================');
-  console.log('🐳 ClickStack MCP: Local ClickHouse Docker Initializer');
+  console.log('🐳 ClickStack MCP: Local ClickStack Docker Initializer');
   console.log('=============================================================\n');
 
   if (!checkDockerRunning()) {
@@ -79,25 +92,25 @@ async function main() {
   // Check if already running and healthy
   const alreadyUp = await pingClickHouse();
   if (alreadyUp) {
-    console.log('⚡ ClickHouse is ALREADY running and responding on http://localhost:8123 (Ok.)');
+    console.log('⚡ ClickStack is ALREADY running and responding on http://localhost:8123 (Ok.)');
   } else {
-    console.log('1. Launching ClickHouse container (clickstack-clickhouse)...');
+    console.log('1. Launching ClickStack container (clickstack-local)...');
     try {
       execSync('docker compose up -d', { stdio: 'inherit' });
     } catch (err) {
       // If container exists but stopped or name conflict, try starting it directly
       try {
-        console.log('   Container exists, attempting to start clickstack-clickhouse...');
-        execSync('docker start clickstack-clickhouse', { stdio: 'inherit' });
+        console.log('   Container exists, attempting to start clickstack-local...');
+        execSync('docker start clickstack-local', { stdio: 'inherit' });
       } catch (startErr) {
-        console.error('❌ Failed to launch or start ClickHouse container:', startErr.message);
+        console.error('❌ Failed to launch or start ClickStack container:', startErr.message);
         process.exit(1);
       }
     }
 
-    console.log('\n2. Waiting for ClickHouse to be healthy on http://localhost:8123...');
+    console.log('\n2. Waiting for ClickStack to be healthy on http://localhost:8123 & http://localhost:8080...');
     let ready = false;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       process.stdout.write('.');
       ready = await pingClickHouse();
       if (ready) break;
@@ -106,7 +119,7 @@ async function main() {
     console.log('');
 
     if (!ready) {
-      console.error('❌ Timeout waiting for ClickHouse to start on port 8123.');
+      console.error('❌ Timeout waiting for ClickStack to start.');
       process.exit(1);
     }
     console.log('✅ ClickHouse HTTP ping responded: Ok.');
@@ -127,7 +140,11 @@ async function main() {
   }
 
   console.log('\n=============================================================');
-  console.log('🎉 Local ClickHouse setup is 100% complete and ready!');
+  console.log('🎉 Local ClickStack setup is 100% complete and ready!');
+  console.log('👉 Available Endpoints:');
+  console.log('   ClickStack Web UI : http://localhost:8080');
+  console.log('   ClickHouse HTTP    : http://localhost:8123');
+  console.log('   OTel Ingestion     : http://localhost:4318 (HTTP) / :4317 (gRPC)');
   console.log('👉 Next Steps for Collaborators:');
   console.log('   npm start        (start MCP server on http://localhost:3000/mcp)');
   console.log('   npm test:tools   (verify all 27 tools)');
